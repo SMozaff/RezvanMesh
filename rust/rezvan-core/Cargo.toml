@@ -1,0 +1,14 @@
+[package]
+name = "rezvan-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+jni = "0.21"
+log = "0.4"
+rezvan-common = { path = "../rezvan-common" }
+rezvan-crypto = { path = "../rezvan-crypto" }
+vodozemac = "0.10"

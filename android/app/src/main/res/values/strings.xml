@@ -1,0 +1,202 @@
+<resources>
+    <string name="app_name">Rezvan Mesh</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">Welcome to Rezvan Mesh</string>
+    <string name="onboarding_welcome_message">Instant offline mesh communication.\nNo internet needed. No setup required.</string>
+    <string name="offline_mesh_title">Offline Mesh Network</string>
+    <string name="offline_mesh_description">Communicate directly with nearby devices using Bluetooth and Wi‑Fi Direct. No cell towers, no internet, no problem.</string>
+    <string name="enter_mesh">Enter Mesh</string>
+    <string name="please_wait">Please wait…</string>
+
+    <!-- Chats -->
+    <string name="chats_title">Chats</string>
+    <string name="chats">Chats</string>
+    <string name="new_message">New Message</string>
+    <string name="new_channel">New Channel</string>
+    <string name="new_conversation">New Conversation</string>
+    <string name="no_conversations_yet">No conversations yet</string>
+    <string name="start_conversation">Tap + to start a conversation</string>
+    <string name="no_conversations">No conversations yet.\nTap + to start one.</string>
+    <string name="search_contacts">Search contacts…</string>
+    <string name="emergency">Emergency</string>
+
+    <!-- Chat Detail -->
+    <string name="type_message">Type a message…</string>
+    <string name="send">Send</string>
+    <string name="attach_file">Attach file</string>
+    <string name="no_messages_yet">No messages yet. Start the conversation!</string>
+
+    <!-- Channels -->
+    <string name="channels_title">Channels</string>
+    <string name="channels">Channels</string>
+    <string name="channel_list">Channel List</string>
+    <string name="join_channel">Join Channel</string>
+    <string name="enter_channel_password">Enter channel password</string>
+    <string name="password">Password</string>
+    <string name="hide_password">Hide password</string>
+    <string name="show_password">Show password</string>
+    <string name="join">Join</string>
+    <string name="refresh">Refresh</string>
+    <string name="create_channel">Create Channel</string>
+    <string name="no_channels_found">No channels found</string>
+    <string name="scan_for_channels">Scan for nearby channels</string>
+    <string name="private_channel">Private Channel</string>
+    <string name="public_channel">Public Channel</string>
+    <string name="members_count">%d members</string>
+    <string name="private_caps">PRIVATE</string>
+    <string name="channel_created_title">Channel Created</string>
+    <string name="channel_created_share_key_hint">Share this channel ID and key with other members so they can join. There is no automatic way to distribute it -- copy it and send it however you\'d normally share something sensitive with them.</string>
+    <string name="channel_id_label">Channel ID: %d</string>
+    <string name="channel_name_label">Channel name</string>
+    <string name="channel_description_label">Description (optional)</string>
+    <string name="channel_password_label">Password</string>
+    <string name="done">Done</string>
+    <string name="toggle_flashlight">Toggle flashlight</string>
+    <string name="camera_permission_needed">Camera access is needed to scan QR codes.</string>
+    <string name="grant_permission">Grant permission</string>
+    <string name="scan_channel_qr">Scan Channel QR</string>
+    <string name="scan_channel_qr_prompt">Point the camera at another member\'s channel QR code</string>
+    <string name="scan_contact_qr">Scan Contact QR</string>
+    <string name="scan_contact_qr_prompt">Point the camera at a Rezvan contact QR code</string>
+    <string name="invalid_channel_qr">This isn\'t a valid RezvanMesh channel QR code.</string>
+    <string name="join_with_qr">Join with QR code</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">Contacts</string>
+    <string name="contacts">Contacts</string>
+    <string name="scan_qr_code">Scan QR Code</string>
+    <string name="add_contact">Add Contact</string>
+    <string name="no_contacts_yet">No contacts yet</string>
+    <string name="no_matching_contacts">No matching contacts</string>
+    <string name="trust_verified">Verified</string>
+    <string name="trust_known">Known</string>
+    <string name="trust_blocked">Blocked</string>
+    <string name="n_selected">%d selected</string>
+    <string name="scan_peer_qr_or_add">Scan a peer\'s QR code or tap +</string>
+    <string name="delete_contacts_title">Delete Contacts</string>
+    <string name="remove_n_contacts">Remove %d contact(s)?</string>
+    <string name="delete">Delete</string>
+    <string name="contact_name_label">Contact name</string>
+    <string name="node_id_hint">Node ID (16 hex chars)</string>
+    <string name="node_id_length_error">Must be exactly 16 hex characters</string>
+    <string name="or_scan_qr_instead">Or scan QR code instead</string>
+    <string name="save">Save</string>
+    <string name="scan_failed">Scan failed</string>
+    <string name="ok">OK</string>
+    <string name="your_mesh_id">Your Mesh ID</string>
+    <string name="share_qr_to_add_you">Share this QR code so others can add you.</string>
+    <string name="cancel_selection">Cancel selection</string>
+    <string name="my_qr">My QR</string>
+    <string name="add_contact_desc">Add contact</string>
+    <string name="qr_image_desc">QR code</string>
+    <string name="open_chat_desc">Open chat</string>
+    <string name="my_mesh_id_desc">My Mesh ID</string>
+    <string name="nearby_title">Nearby</string>
+    <string name="no_devices_nearby">No devices nearby yet. Keep the app open - discovery runs in the background.</string>
+    <string name="advanced_network_monitoring">Advanced network monitoring</string>
+    <string name="peer_n">Peer %d</string>
+    <string name="connected_status">Connected</string>
+    <string name="voice_broadcast_title">Voice Broadcast</string>
+    <string name="emergency_reception">Emergency Reception</string>
+    <string name="release_to_send">RELEASE TO SEND</string>
+    <string name="hold_label">HOLD</string>
+    <string name="to_talk_label">TO TALK</string>
+    <string name="recording_status">Recording…</string>
+    <string name="sending_status">Sending…</string>
+    <string name="sent_status">Sent</string>
+    <string name="delete_selected">Delete selected</string>
+    <string name="battery_desc">Battery</string>
+
+    <!-- Emergency -->
+    <string name="emergency_title">Emergency</string>
+    <string name="emergency_alert">Emergency Alert</string>
+    <string name="emergency_button">SEND EMERGENCY ALERT</string>
+    <string name="emergency_severity">Severity Level</string>
+    <string name="emergency_warning_header">⚠ You are about to send a public emergency alert</string>
+    <string name="emergency_instructions">Choose the severity level and confirm. Your location will be included in the broadcast.</string>
+    <string name="sending_emergency">Sending emergency alert…</string>
+    <string name="emergency_sent_success">Emergency alert sent successfully</string>
+    <string name="emergency_send_failed">Failed to send emergency alert</string>
+    <string name="emergency_disclaimer">⚠ Use only in real emergencies. Misuse may reduce trust in the network.</string>
+    <string name="confirm_emergency">Confirm Emergency Alert</string>
+    <string name="emergency_confirmation_message">Are you sure you want to broadcast this emergency alert to all nearby devices?</string>
+    <string name="emergency_unencrypted_notice">⚠ This alert is signed but NOT encrypted. Anyone nearby with a radio can read its contents. It is broadcast this way on purpose, so it reaches everyone immediately without needing a prior secure connection.</string>
+    <string name="emergency_sent_unencrypted_badge">Sent unencrypted — visible to anyone nearby</string>
+    <string name="send_emergency">Send Emergency Alert</string>
+    <string name="severity_advisory">Advisory</string>
+    <string name="severity_watch">Watch</string>
+    <string name="severity_warning">Warning</string>
+    <string name="severity_critical">Critical</string>
+    <string name="severity_emergency">Emergency</string>
+    <string name="select_severity">Select Severity</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="identity">Identity</string>
+    <string name="node_id">Node ID</string>
+    <string name="appearance">Appearance</string>
+    <string name="theme">Theme</string>
+    <string name="dark">Dark</string>
+    <string name="light">Light</string>
+    <string name="language_region">Language &amp; Region</string>
+    <string name="language">Language</string>
+    <string name="language_farsi">فارسی</string>
+    <string name="language_english">English</string>
+    <string name="language_arabic">العربية</string>
+    <string name="language_urdu">اردو</string>
+    <string name="language_kashmiri">کٲشُر</string>
+    <string name="select_language">Select Language</string>
+    <string name="power_battery">Power &amp; Battery</string>
+    <string name="power_profile">Power Profile</string>
+    <string name="power_emergency">Emergency</string>
+    <string name="power_active">Active</string>
+    <string name="power_balanced">Balanced</string>
+    <string name="power_saver">Power Saver</string>
+    <string name="power_minimal">Minimal</string>
+    <string name="power_hibernation">Hibernation</string>
+    <string name="power_dead">Dead</string>
+    <string name="select_power_profile">Select Power Profile</string>
+    <string name="reset_to_auto">Reset to Auto</string>
+    <string name="auto_adaptive">Auto (Adaptive)</string>
+    <string name="system_power_settings">System Power Settings</string>
+    <string name="system_power_settings_description">Open Android battery saver settings</string>
+    <string name="storage">Storage</string>
+    <string name="storage_used">Storage Used</string>
+    <string name="clear_old_messages">Clear Old Messages</string>
+    <string name="clear_messages_description">Delete messages older than 30 days</string>
+    <string name="clear_messages_confirmation">Are you sure you want to delete old messages? This cannot be undone.</string>
+    <string name="clear">Clear</string>
+    <string name="about">About</string>
+    <string name="app_version">App Version</string>
+    <string name="build_info">Build Info</string>
+    <string name="about_rezvan_mesh">About Rezvan Mesh</string>
+    <string name="about_description">Rezvan Mesh is a decentralized, offline mesh communication app designed for emergency and community use.</string>
+    <string name="version_format">Version %s</string>
+    <string name="open_source_notice">This software is made for exceptional emergency situations to keep society connected</string>
+    <string name="crash_logs">Crash Logs</string>
+    <string name="crash_logs_description">Saved to Documents and Downloads</string>
+    <string name="crash_logs_info">If the app crashes, a log file is automatically saved to your Documents and Downloads folders. Look for files named rezvan_crash_*.txt.</string>
+    <string name="documents_folder">Documents folder</string>
+    <string name="downloads_folder">Downloads folder</string>
+    <string name="bug_report">Bug Report</string>
+    <string name="close">Close</string>
+    <string name="confirm">Confirm</string>
+
+    <!-- General -->
+    <string name="back">Back</string>
+    <string name="cancel">Cancel</string>
+    <string name="continue_text">Continue</string>
+    <string name="finish">Finish</string>
+    <string name="generate">Generate</string>
+    <string name="restore">Restore</string>
+    <string name="get_started">Get Started</string>
+    <string name="create_new">Create New</string>
+    <string name="failed">Failed</string>
+
+    <!-- Service -->
+    <string name="mesh_service_title">Rezvan Mesh</string>
+    <string name="mesh_service_running">Mesh network active</string>
+    <string name="mesh_channel_name">Mesh Service</string>
+    <string name="mesh_channel_description">Rezvan Mesh network service</string>
+</resources>

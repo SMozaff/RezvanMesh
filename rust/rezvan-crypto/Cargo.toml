@@ -1,0 +1,10 @@
+[package]
+name = "rezvan-crypto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sodiumoxide = "0.2"
+rand = "0.8"
+thiserror = "1.0"
+vodozemac = "0.10"   # production X3DH/Olm + Double Ratchet (audited). Fallback: "0.9" if 0.10 fails to resolve.

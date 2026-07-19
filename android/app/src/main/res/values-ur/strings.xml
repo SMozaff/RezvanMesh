@@ -1,0 +1,149 @@
+<resources>
+    <string name="app_name">رضوان میشڈ کمیونیکیشن</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">رضوان میشڈ کمیونیکیشن میں خوش آمدید</string>
+    <string name="onboarding_welcome_message">فوری آف لائن میشڈ کمیونیکیشن۔\nانٹرنیٹ کی ضرورت نہیں۔ کوئی سیٹ اپ ضروری نہیں۔</string>
+    <string name="offline_mesh_title">آف لائن میشڈ نیٹ ورک</string>
+    <string name="offline_mesh_description">قریبی ڈیوائسز کے ساتھ براہ راست رابطہ بلیو ٹوتھ اور وائی فائی ڈائریکٹ کے ذریعے۔ موبائل ٹاور یا انٹرنیٹ کی ضرورت نہیں۔</string>
+    <string name="enter_mesh">نیٹ ورک میں داخل ہوں</string>
+    <string name="please_wait">برائے مہربانی انتظار کریں…</string>
+
+    <!-- Chats -->
+    <string name="chats_title">پیغامات</string>
+    <string name="chats">پیغامات</string>
+    <string name="new_message">نیا پیغام</string>
+    <string name="new_channel">نیا چینل</string>
+    <string name="new_conversation">نی بات چیت</string>
+    <string name="no_conversations_yet">ابھی کوئی بات چیت نہیں</string>
+    <string name="start_conversation">بات چیت شروع کرنے کے لیے + دبائیں</string>
+    <string name="no_conversations">ابھی کوئی بات چیت نہیں۔\nشروع کرنے کے لیے + دبائیں۔</string>
+    <string name="search_contacts">رابطے تلاش کریں…</string>
+    <string name="emergency">ایمرجنسی</string>
+
+    <!-- Chat Detail -->
+    <string name="type_message">اپنا پیغام لکھیں…</string>
+    <string name="send">بھیجیں</string>
+    <string name="attach_file">فائل منسلک کریں</string>
+    <string name="no_messages_yet">ابھی کوئی پیغام نہیں۔ بات چیت شروع کریں!</string>
+
+    <!-- Channels -->
+    <string name="channels_title">چینلز</string>
+    <string name="channels">چینلز</string>
+    <string name="channel_list">چینلز کی فہرست</string>
+    <string name="join_channel">چینل میں شامل ہوں</string>
+    <string name="enter_channel_password">چینل کا پاس ورڈ درج کریں</string>
+    <string name="password">پاس ورڈ</string>
+    <string name="hide_password">پاس ورڈ چھپائیں</string>
+    <string name="show_password">پاس ورڈ دکھائیں</string>
+    <string name="join">شامل ہوں</string>
+    <string name="refresh">تازہ کریں</string>
+    <string name="create_channel">چینل بنائیں</string>
+    <string name="no_channels_found">کوئی چینل نہیں ملا</string>
+    <string name="scan_for_channels">قریبی چینلز تلاش کریں</string>
+    <string name="private_channel">نجی چینل</string>
+    <string name="public_channel">عوامی چینل</string>
+    <string name="members_count">%d ارکان</string>
+    <string name="private_caps">نجی</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">رابطے</string>
+    <string name="contacts">رابطے</string>
+    <string name="scan_qr_code">QR کوڈ اسکین کریں</string>
+    <string name="add_contact">رابطہ شامل کریں</string>
+    <string name="no_contacts_yet">ابھی کوئی رابطہ نہیں</string>
+    <string name="no_matching_contacts">کوئی مماثل رابطہ نہیں</string>
+    <string name="trust_verified">تصدیق شدہ</string>
+    <string name="trust_known">معروف</string>
+    <string name="trust_blocked">مسدود</string>
+
+    <!-- Emergency -->
+    <string name="emergency_title">ایمرجنسی</string>
+    <string name="emergency_alert">ایمرجنسی الرٹ</string>
+    <string name="emergency_button">ایمرجنسی الرٹ بھیجیں</string>
+    <string name="emergency_severity">شدت کی سطح</string>
+    <string name="emergency_warning_header">⚠ آپ ایک عوامی ایمرجنسی الرٹ بھیجنے والے ہیں</string>
+    <string name="emergency_instructions">شدت کی سطح منتخب کریں اور تصدیق کریں۔ آپ کی جغرافیائی موقع نشری میں شامل ہوگی۔</string>
+    <string name="sending_emergency">ایمرجنسی الرٹ بھیجا جا رہا ہے…</string>
+    <string name="emergency_sent_success">ایمرجنسی الرٹ کامیابی سے بھیجی گئی</string>
+    <string name="emergency_send_failed">ایمرجنسی الرٹ بھیجنے میں ناکامی</string>
+    <string name="emergency_disclaimer">⚠ صرف حقیقی ایمرجنسی میں استعمال کریں۔ غلط استعمال نیٹ ورک میں اعتماد کو کم کر سکتا ہے۔</string>
+    <string name="confirm_emergency">ایمرجنسی الرٹ کی تصدیق کریں</string>
+    <string name="emergency_confirmation_message">کیا آپ یقینی ہیں کہ یہ ایمرجنسی الرٹ تمام قریبی ڈیوائسز کو بھیجنا چاہتے ہیں؟</string>
+    <string name="send_emergency">ایمرجنسی الرٹ بھیجیں</string>
+    <string name="severity_advisory">انتباہ</string>
+    <string name="severity_watch">نگرانی</string>
+    <string name="severity_warning">انتہائی انتباہ</string>
+    <string name="severity_critical">سنگین</string>
+    <string name="severity_emergency">ایمرجنسی</string>
+    <string name="select_severity">شدت کی سطح منتخب کریں</string>
+
+    <!-- Settings -->
+    <string name="settings_title">ترتیبات</string>
+    <string name="identity">شناخت</string>
+    <string name="node_id">نوڈ ID</string>
+    <string name="appearance">ظہور</string>
+    <string name="theme">تھیم</string>
+    <string name="dark">گہرا</string>
+    <string name="light">روشن</string>
+    <string name="language_region">زبان و علاقہ</string>
+    <string name="language">زبان</string>
+    <string name="language_farsi">فارسی</string>
+    <string name="language_english">English</string>
+    <string name="language_arabic">العربية</string>
+    <string name="language_urdu">اردو</string>
+    <string name="language_kashmiri">کٲشُر</string>
+    <string name="select_language">زبان منتخب کریں</string>
+    <string name="power_battery">بیٹری اور طاقت</string>
+    <string name="power_profile">پاور پروفائل</string>
+    <string name="power_emergency">ایمرجنسی</string>
+    <string name="power_active">فعال</string>
+    <string name="power_balanced">متوازن</string>
+    <string name="power_saver">بیٹری سیور</string>
+    <string name="power_minimal">کم سے کم</string>
+    <string name="power_hibernation">سوئی ہوئی حالت</string>
+    <string name="power_dead">بند</string>
+    <string name="select_power_profile">پاور پروفائل منتخب کریں</string>
+    <string name="reset_to_auto">خودکار پر واپس کریں</string>
+    <string name="auto_adaptive">خودکار (موافقتی)</string>
+    <string name="system_power_settings">سسٹم بیٹری ترتیبات</string>
+    <string name="system_power_settings_description">Android بیٹری سیور ترتیبات کھولیں</string>
+    <string name="storage">سٹوریج</string>
+    <string name="storage_used">استعمال شدہ جگہ</string>
+    <string name="clear_old_messages">پرانے پیغامات حذف کریں</string>
+    <string name="clear_messages_description">30 دن سے پرانے پیغامات حذف کریں</string>
+    <string name="clear_messages_confirmation">کیا آپ یقینی ہیں کہ پرانے پیغامات حذف کرنا چاہتے ہیں؟ یہ عمل واپس نہیں ہو سکتا۔</string>
+    <string name="clear">حذف کریں</string>
+    <string name="about">بارے میں</string>
+    <string name="app_version">ایپ کا ورژن</string>
+    <string name="build_info">بلڈ کی معلومات</string>
+    <string name="about_rezvan_mesh">رضوان میشڈ کے بارے میں</string>
+    <string name="about_description">رضوان میشڈ کمیونیکیشن ایک غیر مرکزی، آف لائن میشڈ کمیونیکیشن ایپ ہے جو ایمرجنسی اور کمیونٹی کے استعمال کے لیے ڈیزائن کی گئی ہے۔</string>
+    <string name="version_format">ورژن %s</string>
+    <string name="open_source_notice">یہ سافٹ ویئر اوپن سورس ہے اور لوگوں کے لیے بنایا گیا ہے۔</string>
+    <string name="crash_logs">کریش لاگز</string>
+    <string name="crash_logs_description">Documents اور Downloads میں محفوظ</string>
+    <string name="crash_logs_info">اگر ایپ کریش ہو جائے، تو کریش لاگ خودکار طور پر Documents اور Downloads فولڈرز میں محفوظ ہو جاتی ہے۔ rezvan_crash_*.txt نام کی فائلیں تلاش کریں۔</string>
+    <string name="documents_folder">Documents فولڈر</string>
+    <string name="downloads_folder">Downloads فولڈر</string>
+    <string name="bug_report">خرابی کی رپورٹ</string>
+    <string name="close">بند کریں</string>
+    <string name="confirm">تصدیق کریں</string>
+
+    <!-- General -->
+    <string name="back">واپس جائیں</string>
+    <string name="cancel">منسوخ کریں</string>
+    <string name="continue_text">جاری رکھیں</string>
+    <string name="finish">ختم کریں</string>
+    <string name="generate">بنائیں</string>
+    <string name="restore">بحال کریں</string>
+    <string name="get_started">شروع کریں</string>
+    <string name="create_new">نیا بنائیں</string>
+    <string name="failed">ناکام</string>
+
+    <!-- Service -->
+    <string name="mesh_service_title">رضوان میشڈ کمیونیکیشن</string>
+    <string name="mesh_service_running">میشڈ نیٹ ورک فعال ہے</string>
+    <string name="mesh_channel_name">میشڈ کمیونیکیشن سروس</string>
+    <string name="mesh_channel_description">رضوان میشڈ کمیونیکیشن سروس</string>
+</resources>

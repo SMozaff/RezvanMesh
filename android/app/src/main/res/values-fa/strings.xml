@@ -1,0 +1,209 @@
+<resources>
+    <string name="app_name">اتصال مشبک رضوان</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">به اتصال مشبک رضوان خوش آمدید</string>
+    <string name="onboarding_welcome_message">ارتباط فوری و بدون اتصال اینترنت.\nبدون نیاز به اینترنت. بدون تنظیمات.</string>
+    <string name="offline_mesh_title">اتصال مشبک بدون اتصال</string>
+    <string name="offline_mesh_description">ارتباط مستقیم با دستگاه‌های نزدیک از طریق بلوتوث و وای‌فای دایرکت. بدون نیاز به دکل مخابراتی، بدون اینترنت.</string>
+    <string name="enter_mesh">ورود به شبکه</string>
+    <string name="please_wait">لطفاً صبر کنید…</string>
+
+    <!-- Chats -->
+    <string name="chats_title">گفتگوها</string>
+    <string name="chats">گفتگوها</string>
+    <string name="new_message">پیام جدید</string>
+    <string name="new_channel">کانال جدید</string>
+    <string name="new_conversation">گفتگوی جدید</string>
+    <string name="no_conversations_yet">هنوز گفتگویی وجود ندارد</string>
+    <string name="start_conversation">برای شروع گفتگو + را بزنید</string>
+    <string name="no_conversations">هنوز گفتگویی وجود ندارد.\nبرای شروع + را بزنید.</string>
+    <string name="search_contacts">جستجوی مخاطبین…</string>
+    <string name="emergency">اضطراری</string>
+
+    <!-- Chat Detail -->
+    <string name="type_message">پیام خود را بنویسید…</string>
+    <string name="send">ارسال</string>
+    <string name="attach_file">پیوست فایل</string>
+    <string name="no_messages_yet">هنوز پیامی وجود ندارد. گفتگو را شروع کنید!</string>
+
+    <!-- Channels -->
+    <string name="channels_title">کانال‌ها</string>
+    <string name="channels">کانال‌ها</string>
+    <string name="channel_list">لیست کانال‌ها</string>
+    <string name="join_channel">عضویت در کانال</string>
+    <string name="enter_channel_password">رمز عبور کانال را وارد کنید</string>
+    <string name="password">رمز عبور</string>
+    <string name="hide_password">مخفی کردن رمز</string>
+    <string name="show_password">نمایش رمز</string>
+    <string name="join">عضویت</string>
+    <string name="refresh">تازه‌سازی</string>
+    <string name="create_channel">ایجاد کانال</string>
+    <string name="no_channels_found">کانالی پیدا نشد</string>
+    <string name="scan_for_channels">اسکن برای کانال‌های نزدیک</string>
+    <string name="private_channel">کانال خصوصی</string>
+    <string name="public_channel">کانال عمومی</string>
+    <string name="members_count">%d عضو</string>
+    <string name="private_caps">خصوصی</string>
+    <string name="channel_created_title">کانال ایجاد شد</string>
+    <string name="channel_created_share_key_hint">این شناسه کانال و کلید را با سایر اعضا به اشتراک بگذارید تا بتوانند عضو شوند. روش خودکاری برای توزیع آن وجود ندارد -- آن را کپی کرده و همان‌طور که معمولاً اطلاعات حساس را با آن‌ها به اشتراک می‌گذارید، ارسال کنید.</string>
+    <string name="channel_id_label">شناسه کانال: %d</string>
+    <string name="channel_name_label">نام کانال</string>
+    <string name="channel_description_label">توضیحات (اختیاری)</string>
+    <string name="channel_password_label">رمز عبور</string>
+    <string name="done">تمام</string>
+    <string name="toggle_flashlight">روشن/خاموش کردن چراغ قوه</string>
+    <string name="camera_permission_needed">برای اسکن کد QR به دسترسی دوربین نیاز است.</string>
+    <string name="grant_permission">اعطای دسترسی</string>
+    <string name="scan_channel_qr">اسکن کد QR کانال</string>
+    <string name="scan_channel_qr_prompt">دوربین را به سمت کد QR کانال یکی دیگر از اعضا بگیرید</string>
+    <string name="scan_contact_qr">اسکن کد QR مخاطب</string>
+    <string name="scan_contact_qr_prompt">دوربین را به سمت کد QR مخاطب رضوان بگیرید</string>
+    <string name="invalid_channel_qr">این یک کد QR معتبر کانال رضوان‌مش نیست.</string>
+    <string name="join_with_qr">عضویت با کد QR</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">مخاطبین</string>
+    <string name="contacts">مخاطبین</string>
+    <string name="scan_qr_code">اسکن کد QR</string>
+    <string name="add_contact">افزودن مخاطب</string>
+    <string name="no_contacts_yet">هنوز مخاطبی وجود ندارد</string>
+    <string name="no_matching_contacts">مخاطبی مطابقت ندارد</string>
+    <string name="trust_verified">تأیید شده</string>
+    <string name="trust_known">شناخته شده</string>
+    <string name="trust_blocked">مسدود</string>
+
+    <!-- Emergency -->
+    <string name="emergency_title">اضطراری</string>
+    <string name="emergency_alert">هشدار اضطراری</string>
+    <string name="emergency_button">ارسال هشدار اضطراری</string>
+    <string name="emergency_severity">سطح هشدار</string>
+    <string name="emergency_warning_header">⚠ شما در حال ارسال یک هشدار اضطراری عمومی هستید</string>
+    <string name="emergency_instructions">سطح هشدار را انتخاب و تأیید کنید. موقعیت جغرافیایی شما در اعلامیه گنجانده می‌شود.</string>
+    <string name="sending_emergency">در حال ارسال هشدار اضطراری…</string>
+    <string name="emergency_sent_success">هشدار اضطراری با موفقیت ارسال شد</string>
+    <string name="emergency_send_failed">ارسال هشدار اضطراری شکست خورد</string>
+    <string name="emergency_disclaimer">⚠ فقط در شرایط اضطراری واقعی استفاده کنید. سوء استفاده ممکن است اعتماد شبکه را کاهش دهد.</string>
+    <string name="confirm_emergency">تأیید هشدار اضطراری</string>
+    <string name="emergency_confirmation_message">آیا مطمئن هستید که می‌خواهید این هشدار اضطراری را برای همه دستگاه‌های مجاور ارسال کنید؟</string>
+    <string name="emergency_unencrypted_notice">⚠ این هشدار امضا شده اما رمزنگاری نشده است. هر شخصی در نزدیکی که دستگاه رادیویی داشته باشد می‌تواند محتوای آن را بخواند. این پیام عمداً به این شکل ارسال می‌شود تا بدون نیاز به یک اتصال امن از قبل، فوراً به همه برسد.</string>
+    <string name="emergency_sent_unencrypted_badge">بدون رمزنگاری ارسال شد — برای هر شخصی در نزدیکی قابل مشاهده است</string>
+    <string name="send_emergency">ارسال هشدار اضطراری</string>
+    <string name="severity_advisory">اطلاع‌رسانی</string>
+    <string name="severity_watch">مراقبت</string>
+    <string name="severity_warning">هشدار</string>
+    <string name="severity_critical">بحرانی</string>
+    <string name="severity_emergency">اضطراری</string>
+    <string name="select_severity">انتخاب سطح هشدار</string>
+
+    <!-- Settings -->
+    <string name="settings_title">تنظیمات</string>
+    <string name="identity">هویت</string>
+    <string name="node_id">شناسه گره</string>
+    <string name="appearance">ظاهر</string>
+    <string name="theme">پوسته</string>
+    <string name="dark">تاریک</string>
+    <string name="light">روشن</string>
+    <string name="language_region">زبان و منطقه</string>
+    <string name="language">زبان</string>
+    <string name="language_farsi">فارسی</string>
+    <string name="language_english">English</string>
+    <string name="language_arabic">العربية</string>
+    <string name="language_urdu">اردو</string>
+    <string name="language_kashmiri">کٲشُر</string>
+    <string name="select_language">انتخاب زبان</string>
+    <string name="power_battery">باتری و مصرف</string>
+    <string name="power_profile">پروفایل مصرف</string>
+    <string name="power_emergency">اضطراری</string>
+    <string name="power_active">فعال</string>
+    <string name="power_balanced">متوازن</string>
+    <string name="power_saver">صرفه‌جو</string>
+    <string name="power_minimal">حداقلی</string>
+    <string name="power_hibernation">خواب زمستانی</string>
+    <string name="power_dead">خاموش</string>
+    <string name="select_power_profile">انتخاب پروفایل مصرف</string>
+    <string name="reset_to_auto">بازگشت به خودکار</string>
+    <string name="auto_adaptive">خودکار (تطبیقی)</string>
+    <string name="system_power_settings">تنظیمات باتری سیستم</string>
+    <string name="system_power_settings_description">باز کردن تنظیمات باتری اندروید</string>
+    <string name="storage">ذخیره‌سازی</string>
+    <string name="storage_used">فضای استفاده شده</string>
+    <string name="clear_old_messages">حذف پیام‌های قدیمی</string>
+    <string name="clear_messages_description">پیام‌های قدیمی‌تر از ۳۰ روز حذف شوند.</string>
+    <string name="clear_messages_confirmation">آیا مطمئن هستید که می‌خواهید پیام‌های قدیمی را حذف کنید؟ این عملیات قابل بازگشت نیست.</string>
+    <string name="clear">حذف</string>
+    <string name="about">درباره</string>
+    <string name="app_version">نسخه برنامه</string>
+    <string name="build_info">اطلاعات ساخت</string>
+    <string name="about_rezvan_mesh">درباره اتصال مشبک رضوان</string>
+    <string name="about_description">اتصال مشبک رضوان یک برنامه ارتباطی مشبک غیرمتمرکز و بدون اتصال است که برای موارد اضطراری و جامعه طراحی شده است.</string>
+    <string name="version_format">نسخه %s</string>
+    <string name="open_source_notice">این نرم‌افزار متن‌باز و برای مردم ساخته شده است.</string>
+    <string name="crash_logs">گزارش خطا</string>
+    <string name="crash_logs_description">ذخیره شده در Documents و Downloads</string>
+    <string name="crash_logs_info">اگر برنامه بسته شود، فایل گزارش خطا به طور خودکار در پوشه‌های Documents و Downloads ذخیره می‌شود. فایل‌ها با نام rezvan_crash_*.txt هستند.</string>
+    <string name="documents_folder">پوشه Documents</string>
+    <string name="downloads_folder">پوشه Downloads</string>
+    <string name="bug_report">گزارش خطا</string>
+    <string name="close">بستن</string>
+    <string name="confirm">تأیید</string>
+
+    <!-- General -->
+    <string name="back">بازگشت</string>
+    <string name="cancel">انصراف</string>
+    <string name="continue_text">ادامه</string>
+    <string name="finish">پایان</string>
+    <string name="generate">ایجاد</string>
+    <string name="restore">بازیابی</string>
+    <string name="get_started">شروع</string>
+    <string name="create_new">ایجاد جدید</string>
+    <string name="failed">ناموفق</string>
+
+    <!-- Service -->
+    <string name="mesh_service_title">اتصال مشبک رضوان</string>
+    <string name="mesh_service_running">اتصال مشبک فعال است</string>
+    <string name="mesh_channel_name">سرویس اتصال مشبک</string>
+    <string name="mesh_channel_description">سرویس اتصال مشبک رضوان</string>
+
+    <!-- Contacts (additional) -->
+    <string name="n_selected">%d مورد انتخاب شد</string>
+    <string name="scan_peer_qr_or_add">کد QR یک همتا را اسکن کنید یا روی + بزنید</string>
+    <string name="delete_contacts_title">حذف مخاطبین</string>
+    <string name="remove_n_contacts">%d مخاطب حذف شود؟</string>
+    <string name="delete">حذف</string>
+    <string name="contact_name_label">نام مخاطب</string>
+    <string name="node_id_hint">شناسه گره (۱۶ کاراکتر هگز)</string>
+    <string name="node_id_length_error">باید دقیقاً ۱۶ کاراکتر هگز باشد</string>
+    <string name="or_scan_qr_instead">یا در عوض کد QR را اسکن کنید</string>
+    <string name="save">ذخیره</string>
+    <string name="scan_failed">اسکن ناموفق بود</string>
+    <string name="ok">تأیید</string>
+    <string name="your_mesh_id">شناسه مشبک شما</string>
+    <string name="share_qr_to_add_you">این کد QR را به اشتراک بگذارید تا دیگران بتوانند شما را اضافه کنند.</string>
+    <string name="cancel_selection">لغو انتخاب</string>
+    <string name="my_qr">کد QR من</string>
+    <string name="add_contact_desc">افزودن مخاطب</string>
+    <string name="qr_image_desc">کد QR</string>
+    <string name="open_chat_desc">باز کردن گفتگو</string>
+
+    <!-- Network (additional) -->
+    <string name="my_mesh_id_desc">شناسه مشبک من</string>
+    <string name="nearby_title">در نزدیکی</string>
+    <string name="no_devices_nearby">هنوز دستگاهی در نزدیکی نیست. برنامه را باز نگه دارید -- شناسایی در پس‌زمینه ادامه دارد.</string>
+    <string name="advanced_network_monitoring">پایش پیشرفته شبکه</string>
+    <string name="peer_n">همتای %d</string>
+    <string name="connected_status">متصل</string>
+
+    <!-- Voice (additional) -->
+    <string name="voice_broadcast_title">پخش صوتی</string>
+    <string name="emergency_reception">دریافت پیام‌های اضطراری</string>
+    <string name="release_to_send">برای ارسال رها کنید</string>
+    <string name="hold_label">نگه دارید</string>
+    <string name="to_talk_label">برای صحبت</string>
+    <string name="recording_status">در حال ضبط…</string>
+    <string name="sending_status">در حال ارسال…</string>
+    <string name="sent_status">ارسال شد</string>
+    <string name="delete_selected">حذف موارد انتخاب‌شده</string>
+    <string name="battery_desc">باتری</string>
+</resources>
+

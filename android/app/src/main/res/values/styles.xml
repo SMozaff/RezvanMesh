@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launch / window theme. Dark-first to match the Base Emissive palette;
+         in-app Compose theming handles the rest. -->
+    <style name="Theme.RezvanMesh" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#19D3F3</item>
+        <item name="android:colorPrimaryDark">#101317</item>
+        <item name="android:colorAccent">#4EC9FF</item>
+        <item name="android:statusBarColor">#101317</item>
+        <item name="android:navigationBarColor">#101317</item>
+        <item name="android:windowBackground">#101317</item>
+    </style>
+</resources>

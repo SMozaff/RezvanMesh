@@ -1,0 +1,149 @@
+<resources>
+    <string name="app_name">Rezvan Mesh</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_welcome_title">مرحبًا بك في Rezvan Mesh</string>
+    <string name="onboarding_welcome_message">اتصال شبكي فوري دون إنترنت.\nلا حاجة إلى الإنترنت. لا حاجة إلى أي إعداد.</string>
+    <string name="offline_mesh_title">شبكة متداخلة دون اتصال</string>
+    <string name="offline_mesh_description">تواصل مباشرةً مع الأجهزة القريبة عبر البلوتوث وWi-Fi Direct. لا حاجة إلى أبراج الاتصال أو الإنترنت.</string>
+    <string name="enter_mesh">ادخل إلى الشبكة</string>
+    <string name="please_wait">يُرجى الانتظار…</string>
+
+    <!-- Chats -->
+    <string name="chats_title">المحادثات</string>
+    <string name="chats">المحادثات</string>
+    <string name="new_message">رسالة جديدة</string>
+    <string name="new_channel">قناة جديدة</string>
+    <string name="new_conversation">محادثة جديدة</string>
+    <string name="no_conversations_yet">لا توجد محادثات بعد</string>
+    <string name="start_conversation">اضغط + لبدء محادثة</string>
+    <string name="no_conversations">لا توجد محادثات بعد.\nاضغط + لبدء واحدة.</string>
+    <string name="search_contacts">ابحث في جهات الاتصال…</string>
+    <string name="emergency">طوارئ</string>
+
+    <!-- Chat Detail -->
+    <string name="type_message">اكتب رسالة…</string>
+    <string name="send">إرسال</string>
+    <string name="attach_file">إرفاق ملف</string>
+    <string name="no_messages_yet">لا توجد رسائل بعد. ابدأ المحادثة!</string>
+
+    <!-- Channels -->
+    <string name="channels_title">القنوات</string>
+    <string name="channels">القنوات</string>
+    <string name="channel_list">قائمة القنوات</string>
+    <string name="join_channel">الانضمام إلى قناة</string>
+    <string name="enter_channel_password">أدخل كلمة مرور القناة</string>
+    <string name="password">كلمة المرور</string>
+    <string name="hide_password">إخفاء كلمة المرور</string>
+    <string name="show_password">إظهار كلمة المرور</string>
+    <string name="join">انضمام</string>
+    <string name="refresh">تحديث</string>
+    <string name="create_channel">إنشاء قناة</string>
+    <string name="no_channels_found">لم يتم العثور على قنوات</string>
+    <string name="scan_for_channels">ابحث عن القنوات القريبة</string>
+    <string name="private_channel">قناة خاصة</string>
+    <string name="public_channel">قناة عامة</string>
+    <string name="members_count">%d عضوًا</string>
+    <string name="private_caps">خاصة</string>
+
+    <!-- Contacts -->
+    <string name="contacts_title">جهات الاتصال</string>
+    <string name="contacts">جهات الاتصال</string>
+    <string name="scan_qr_code">امسح رمز QR</string>
+    <string name="add_contact">إضافة جهة اتصال</string>
+    <string name="no_contacts_yet">لا توجد جهات اتصال بعد</string>
+    <string name="no_matching_contacts">لا توجد جهات اتصال مطابقة</string>
+    <string name="trust_verified">موثّقة</string>
+    <string name="trust_known">معروفة</string>
+    <string name="trust_blocked">محظورة</string>
+
+    <!-- Emergency -->
+    <string name="emergency_title">طوارئ</string>
+    <string name="emergency_alert">تنبيه طوارئ</string>
+    <string name="emergency_button">إرسال تنبيه طوارئ</string>
+    <string name="emergency_severity">مستوى الخطورة</string>
+    <string name="emergency_warning_header">⚠ أنت على وشك إرسال تنبيه طوارئ عام</string>
+    <string name="emergency_instructions">اختر مستوى الخطورة وأكّد. سيُضمَّن موقعك في البث.</string>
+    <string name="sending_emergency">جارٍ إرسال تنبيه الطوارئ…</string>
+    <string name="emergency_sent_success">تم إرسال تنبيه الطوارئ بنجاح</string>
+    <string name="emergency_send_failed">فشل إرسال تنبيه الطوارئ</string>
+    <string name="emergency_disclaimer">⚠ استخدمه فقط في حالات الطوارئ الحقيقية. قد يؤدي سوء الاستخدام إلى تقليل الثقة في الشبكة.</string>
+    <string name="confirm_emergency">تأكيد تنبيه الطوارئ</string>
+    <string name="emergency_confirmation_message">هل أنت متأكد أنك تريد بث تنبيه الطوارئ هذا إلى جميع الأجهزة القريبة؟</string>
+    <string name="send_emergency">إرسال تنبيه الطوارئ</string>
+    <string name="severity_advisory">إرشادي</string>
+    <string name="severity_watch">مراقبة</string>
+    <string name="severity_warning">تحذير</string>
+    <string name="severity_critical">حرج</string>
+    <string name="severity_emergency">طوارئ</string>
+    <string name="select_severity">اختر مستوى الخطورة</string>
+
+    <!-- Settings -->
+    <string name="settings_title">الإعدادات</string>
+    <string name="identity">الهوية</string>
+    <string name="node_id">معرّف العقدة</string>
+    <string name="appearance">المظهر</string>
+    <string name="theme">السمة</string>
+    <string name="dark">داكن</string>
+    <string name="light">فاتح</string>
+    <string name="language_region">اللغة والمنطقة</string>
+    <string name="language">اللغة</string>
+    <string name="language_farsi">فارسی</string>
+    <string name="language_english">English</string>
+    <string name="language_arabic">العربية</string>
+    <string name="language_urdu">اردو</string>
+    <string name="language_kashmiri">کٲشُر</string>
+    <string name="select_language">اختر اللغة</string>
+    <string name="power_battery">الطاقة والبطارية</string>
+    <string name="power_profile">وضع الطاقة</string>
+    <string name="power_emergency">طوارئ</string>
+    <string name="power_active">نشط</string>
+    <string name="power_balanced">متوازن</string>
+    <string name="power_saver">موفّر الطاقة</string>
+    <string name="power_minimal">الحد الأدنى</string>
+    <string name="power_hibernation">سُبات</string>
+    <string name="power_dead">متوقّف</string>
+    <string name="select_power_profile">اختر وضع الطاقة</string>
+    <string name="reset_to_auto">إعادة التعيين إلى تلقائي</string>
+    <string name="auto_adaptive">تلقائي (تكيّفي)</string>
+    <string name="system_power_settings">إعدادات طاقة النظام</string>
+    <string name="system_power_settings_description">افتح إعدادات موفّر البطارية في أندرويد</string>
+    <string name="storage">التخزين</string>
+    <string name="storage_used">المساحة المستخدمة</string>
+    <string name="clear_old_messages">مسح الرسائل القديمة</string>
+    <string name="clear_messages_description">حذف الرسائل الأقدم من 30 يومًا</string>
+    <string name="clear_messages_confirmation">هل أنت متأكد أنك تريد حذف الرسائل القديمة؟ لا يمكن التراجع عن هذا الإجراء.</string>
+    <string name="clear">مسح</string>
+    <string name="about">حول</string>
+    <string name="app_version">إصدار التطبيق</string>
+    <string name="build_info">معلومات البناء</string>
+    <string name="about_rezvan_mesh">حول Rezvan Mesh</string>
+    <string name="about_description">‏Rezvan Mesh تطبيق تواصل لا مركزي يعمل دون اتصال، مصمَّم للاستخدام في حالات الطوارئ والمجتمعات.</string>
+    <string name="version_format">الإصدار %s</string>
+    <string name="open_source_notice">هذا البرنامج مفتوح المصدر ومبني من أجل الناس.</string>
+    <string name="crash_logs">سجلات الأعطال</string>
+    <string name="crash_logs_description">محفوظة في المستندات والتنزيلات</string>
+    <string name="crash_logs_info">إذا تعطّل التطبيق، يُحفظ ملف سجل تلقائيًا في مجلدَي المستندات والتنزيلات. ابحث عن ملفات باسم rezvan_crash_*.txt.</string>
+    <string name="documents_folder">مجلد المستندات</string>
+    <string name="downloads_folder">مجلد التنزيلات</string>
+    <string name="bug_report">الإبلاغ عن خلل</string>
+    <string name="close">إغلاق</string>
+    <string name="confirm">تأكيد</string>
+
+    <!-- General -->
+    <string name="back">رجوع</string>
+    <string name="cancel">إلغاء</string>
+    <string name="continue_text">متابعة</string>
+    <string name="finish">إنهاء</string>
+    <string name="generate">إنشاء</string>
+    <string name="restore">استعادة</string>
+    <string name="get_started">ابدأ</string>
+    <string name="create_new">إنشاء جديد</string>
+    <string name="failed">فشل</string>
+
+    <!-- Service -->
+    <string name="mesh_service_title">Rezvan Mesh</string>
+    <string name="mesh_service_running">الشبكة المتداخلة نشطة</string>
+    <string name="mesh_channel_name">خدمة الشبكة</string>
+    <string name="mesh_channel_description">خدمة شبكة Rezvan Mesh</string>
+</resources>

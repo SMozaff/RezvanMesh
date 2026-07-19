@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "rezvan-common",
+    "rezvan-crypto",
+    "rezvan-core",
+]
