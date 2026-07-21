@@ -12,12 +12,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rezvani.mesh.R
 import com.rezvani.mesh.ui.components.SeverityPicker
 import com.rezvani.mesh.ui.viewmodel.VoiceViewModel
 import com.rezvani.mesh.ui.viewmodel.VoiceUiState
@@ -47,7 +45,7 @@ fun VoiceScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            text = stringResource(R.string.voice_broadcast_title),
+            text = "Voice Broadcast",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
@@ -56,7 +54,7 @@ fun VoiceScreen(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(stringResource(R.string.emergency_reception), modifier = Modifier.weight(1f))
+            Text("Emergency Reception", modifier = Modifier.weight(1f))
             Switch(
                 checked = uiState.receptionEnabled,
                 onCheckedChange = { viewModel.toggleReception(it) }
@@ -101,10 +99,10 @@ fun VoiceScreen(
                         color = MaterialTheme.colorScheme.onError,
                         strokeWidth = 4.dp
                     )
-                    Text(stringResource(R.string.release_to_send), color = MaterialTheme.colorScheme.onError)
+                    Text("RELEASE TO SEND", color = MaterialTheme.colorScheme.onError)
                 } else {
-                    Text(stringResource(R.string.hold_label), style = MaterialTheme.typography.headlineSmall)
-                    Text(stringResource(R.string.to_talk_label), style = MaterialTheme.typography.headlineSmall)
+                    Text("HOLD", style = MaterialTheme.typography.headlineSmall)
+                    Text("TO TALK", style = MaterialTheme.typography.headlineSmall)
                 }
             }
         }
@@ -112,9 +110,9 @@ fun VoiceScreen(
         val status = uiState.status
         when (status) {
             is VoiceUiState.Status.Ready -> {}
-            is VoiceUiState.Status.Recording -> Text(stringResource(R.string.recording_status), color = MaterialTheme.colorScheme.error)
-            is VoiceUiState.Status.Sending -> Text(stringResource(R.string.sending_status))
-            is VoiceUiState.Status.Sent -> Text(stringResource(R.string.sent_status), color = MaterialTheme.colorScheme.primary)
+            is VoiceUiState.Status.Recording -> Text("Recording…", color = MaterialTheme.colorScheme.error)
+            is VoiceUiState.Status.Sending -> Text("Sending…")
+            is VoiceUiState.Status.Sent -> Text("Sent", color = MaterialTheme.colorScheme.primary)
             is VoiceUiState.Status.Error -> Text(status.message, color = MaterialTheme.colorScheme.error)
         }
     }

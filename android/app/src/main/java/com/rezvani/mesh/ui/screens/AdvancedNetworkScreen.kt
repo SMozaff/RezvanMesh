@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
@@ -41,7 +40,6 @@ import java.util.*
 @Composable
 fun AdvancedNetworkScreen(
     onNavigateBack: () -> Unit = {},
-    onNavigateToDiagnostics: (() -> Unit)? = null,
     viewModel: StatusViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -70,13 +68,7 @@ fun AdvancedNetworkScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                actions = {
-                    if (onNavigateToDiagnostics != null) {
-                        IconButton(onClick = onNavigateToDiagnostics) {
-                            Icon(Icons.Default.BugReport, contentDescription = "Diagnostics")
-                        }
-                    }
-                }
+
             )
         }
     ) { scaffoldPadding ->

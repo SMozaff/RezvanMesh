@@ -60,31 +60,6 @@ fun DiagnosticsScreen(
                 Text("Run All Automatable Tests")
             }
 
-            OutlinedButton(
-                onClick = { viewModel.saveResults() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = uiState.saveStatus != TestStatus.RUNNING
-            ) {
-                if (uiState.saveStatus == TestStatus.RUNNING) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text("Save Results to Downloads")
-            }
-            when (uiState.saveStatus) {
-                TestStatus.PASS -> Text(
-                    text = "Saved as ${uiState.lastSavedFilename} in Downloads",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                TestStatus.FAIL -> Text(
-                    text = "Save failed -- check storage permission and try again",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-                else -> {}
-            }
-
             HorizontalDivider()
             Text(
                 text = "A. Crypto / wire pipeline (no second device needed)",

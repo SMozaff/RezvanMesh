@@ -53,17 +53,17 @@ fun ChatsScreen(
             if (isInSelectionMode) {
                 // Selection-mode top bar
                 TopAppBar(
-                    title = { Text(stringResource(R.string.n_selected, selectedConversations.size)) },
+                    title = { Text("${selectedConversations.size} selected") },
                     navigationIcon = {
                         IconButton(onClick = { viewModel.clearSelection() }) {
-                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cancel_selection))
+                            Icon(Icons.Default.Close, contentDescription = "Cancel selection")
                         }
                     },
                     actions = {
                         IconButton(onClick = { viewModel.deleteSelectedConversations() }) {
                             Icon(
                                 Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.delete_selected),
+                                contentDescription = "Delete selected",
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }

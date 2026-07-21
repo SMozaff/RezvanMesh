@@ -5,13 +5,11 @@
 ![Language](https://img.shields.io/badge/languages-Kotlin%20%7C%20Rust%20%7C%20C-orange)
 ![Status](https://img.shields.io/badge/status-Beta%20(Functional%20Testing)-yellow)
 
-> **Note:** This README has been corrected against the actual Rust source (see `RUST_ENGINE_AUDIT.md`). The previous version described identity derivation from a device MAC address; the code has never worked that way — identity is generated from a `SecureRandom` CSPRNG seed. This and a few other stale claims are fixed below.
-
 ---
 
 ## Mission
 
-**Rezvan Mesh** is a peer-to-peer mesh communication application for Android devices. It enables resilient, off-grid messaging during nationwide internet shutdowns and infrastructure failures — without relying on cellular towers, internet connectivity, or centralized servers.
+**Rezvan Mesh** is a peer-to-peer mesh communication application for Android devices. It enables resilient, off-grid messaging during nationwide internet shutdowns and infrastructure failures—without relying on cellular towers, internet connectivity, or centralized servers.
 
 **Target Scenario:** Iranian civilians during communications blackouts, with extreme power efficiency and resilience under jamming/SIGINT threats.
 
@@ -23,12 +21,12 @@
 
 ### ✅ Implemented & Tested
 
-- **Mesh Routing** – BATMAN-Adv-style protocol over BLE advertisement + GATT unicast
-- **End-to-End Encryption** – X3DH + Double Ratchet via `vodozemac` (audited Rust Olm implementation), AEAD via libsodium
+- **Mesh Routing** – BATMAN-Adv protocol over BLE advertisement + GATT unicast
+- **End-to-End Encryption** – Signal Protocol (X3DH + Double Ratchet) via libsodium
 - **Text Messaging** – Up to 10,000 characters per message
 - **Voice Broadcasting** – Opus codec @ 16 kbps, push-to-talk up to 60 seconds
 - **Emergency Alerts** – SOS button with 5 severity levels, network-wide flooding
-- **Offline Identity** – CSPRNG-generated seed (`SecureRandom`, 32 bytes), domain-separated HKDF-SHA256 key derivation, 12-word BIP39 backup
+- **Offline Identity** – Deterministic seed derivation (MAC-based), 12-word BIP39 backup
 - **Encrypted Storage** – SQLCipher database for contacts, messages, voice logs
 - **Multi-Language UI** – Farsi (primary) + English, runtime switchable
 - **Power Management** – 7-state power machine (Emergency → Hibernation) with dynamic duty cycling
@@ -40,7 +38,6 @@
 - **Voice Playback on Receiver** – MediaPlayer integration incomplete
 - **3+ Device Mesh Stability** – Multi-hop routing validation needed
 - **WiFi Direct Transport** – Stubs only, deferred to v1.1
-- **Group/Channel Messaging** – Sender-key crypto is implemented and tested in `rezvan-crypto`, but not yet wired to any transport layer
 
 ---
 
@@ -60,14 +57,14 @@
             ↕ Native Interface
 ┌──────────────────────────────────────┐
 │   MeshEngine (Rust)                  │
-│  BATMAN-Adv-style Routing            │
+│  BATMAN-Adv Routing                  │
 │  Packet Processing & Crypto Wrapper  │
 └──────────────────────────────────────┘
             ↕ FFI
 ┌──────────────────────────────────────┐
-│   CryptoProvider (Rust)              │
-│  Ed25519 Signing (libsodium)         │
-│  X3DH + Double Ratchet (vodozemac)   │
+│   CryptoProvider (Rust + libsodium)  │
+│  Ed25519 Signing                     │
+│  X3DH Key Exchange                   │
 │  XChaCha20-Poly1305 AEAD             │
 └──────────────────────────────────────┘
 ```
@@ -79,11 +76,9 @@
 | UI | Kotlin | Jetpack Compose | Modern, concise, Material 3 support |
 | Radio Service | Kotlin | Android Framework APIs | Native BLE/WiFi Direct access |
 | Mesh Engine | Rust | JNI | Memory safety, no GC, real-time capable |
-| Cryptography | Rust | `vodozemac` (X3DH/Double Ratchet) + `sodiumoxide` (Ed25519, AEAD) | Audited ratchet implementation; constant-time primitives |
+| Cryptography | Rust/C | libsodium (sodiumoxide) | Industry-standard, constant-time |
 | Database | Kotlin | Room + SQLCipher | Encrypted at rest, type-safe queries |
 | Build System | Gradle + Cargo | cargo-ndk | Android NDK cross-compilation |
-
-> **Dependency note:** `sodiumoxide` is effectively unmaintained upstream. The underlying `libsodium` C library is still fine; the Rust binding itself has stagnated. Worth a migration plan (e.g. to `libsodium-sys` directly or a RustCrypto equivalent) even though there's no known active vulnerability today.
 
 ---
 
@@ -133,7 +128,7 @@ adb logcat -s RezvanMesh
 
 1. **Onboarding Flow:**
    - Welcome screen explains offline mesh capability
-   - Tap "Create Identity" → 32 random bytes generated via `SecureRandom`, expanded into an Ed25519 + X25519 keypair via domain-separated HKDF-SHA256
+   - Tap "Create Identity" → generates Ed25519 keypair from MAC-derived seed
    - System displays 12-word BIP39 mnemonic (user writes it down)
    - Confirm phrase, set optional nickname
    - Land in Status screen (scanning for neighbors)
@@ -151,7 +146,7 @@ adb logcat -s RezvanMesh
 
 1. **Text Message:**
    - Status → "New Message" button → select contact (or enter Node ID) → type text → Send
-   - Message encrypted end-to-end (X3DH + Double Ratchet via `vodozemac`), routed via mesh
+   - Message encrypted with Signal Protocol, routed via mesh
    - Delivery confirmed in ChatDetailScreen (checkmark = received)
 
 2. **Voice Broadcast (Push-to-Talk):**
@@ -165,7 +160,6 @@ adb logcat -s RezvanMesh
    - Red button triggers emergency broadcast
    - Floods through mesh with TTL=10, bypasses rate limiting
    - All devices wake from Doze mode if severity ≥ 4
-   - **Important:** if no encrypted session exists yet with a given recipient, emergency broadcasts fall back to **plaintext** by design, to guarantee delivery in a crisis. The UI should make this visible per-message so users know when a broadcast wasn't encrypted.
 
 ### Contacts
 
@@ -195,7 +189,7 @@ adb logcat -s RezvanMesh
 
 ## Architecture Deep Dive
 
-### Mesh Routing (BATMAN-Adv style)
+### Mesh Routing (BATMAN-Adv)
 
 **OGM (Originator Message) Flooding:**
 - Every 5 seconds, each node broadcasts an OGM with routing table snapshot
@@ -219,35 +213,27 @@ Link_Quality = RSSI → Quality mapping:
 - Up to 3 routes per destination (primary, backup, experimental)
 - Best route = lowest metric
 - Converges within 10-30 seconds in stable topology
-- Staleness purge uses logical clocks (no wall-clock dependency at this layer). Note: purging a peer resets its replay-sequence tracking, so a peer that leaves and later rejoins gets a fresh sequence window — a small, documented tradeoff rather than a hidden gap.
 
 ### Encryption
 
-**Identity Generation (actual implementation):**
+**Identity Generation:**
 ```rust
-Seed = SecureRandom(32 bytes)                          // generated on-device, Kotlin side
-(Private_Ed25519, Private_X25519) = HKDF-SHA256(Seed, domain-separated info strings)
-Public_Ed25519 = crypto_sign_ed25519_seed_keypair(Private_Ed25519)
-Public_X25519  = crypto_scalarmult_curve25519_base(Private_X25519)
+Seed = HKDF(MAC_address, salt="rezvan", 32 bytes)
+Public_Ed25519 = crypto_sign_ed25519_seed_keypair(seed)
+Public_X25519 = crypto_scalarmult_curve25519_base(seed)
 Node_ID = SHA-256(Public_Ed25519)[0:8]
 ```
-Identity key material is derived **only** from a securely generated random seed — never from a MAC address, IMEI, Android ID, or any other device-identifying value.
 
 **Unicast (Point-to-Point):**
-- X3DH key exchange with signed prekeys + one-time prekeys, via `vodozemac`
-- Double Ratchet: Root Key → Chain Keys → Message Keys (handled internally by `vodozemac`)
+- X3DH key exchange with signed prekeys + one-time prekeys
+- Double Ratchet: Root Key → Chain Keys → Message Keys
 - Per-message AEAD: XChaCha20-Poly1305 (32-byte nonce, 16-byte tag)
 - Forward secrecy: old chain keys deleted after use
-- KeyAnnouncement messages are bound to their claimed Node ID (`SHA-256(pubkey) == NodeId` check) to prevent identity-spoofing attacks
 
-**Group/Broadcast (implemented, not yet wired to transport):**
+**Group/Broadcast:**
 - Sender key: 32-byte shared symmetric key per channel
-- Sign-then-encrypt: Ed25519 signature over plaintext, then XChaCha20-Poly1305 AEAD
+- AES-256-GCM or XChaCha20-Poly1305 with random nonce
 - Rotate on membership change
-
-**Beacon Authentication:**
-- 7-byte truncated HMAC, sized to fit within the 24-byte legacy BLE beacon payload
-- Provides deterrence against casual spoofing, not strong non-repudiation — deliberately documented as such in code; a determined attacker with compute resources could brute-force it
 
 ### Power Management
 
@@ -284,8 +270,6 @@ Offset │ Size │ Field              │ Value
 ───────┴──────┴────────────────────┴──────────────────────
 ```
 
-> Node IDs are 64 bits (SHA-256 truncated to 8 bytes). This is fine at the mesh's realistic scale; it would only become a meaningful collision risk at a global scale of billions of concurrent nodes.
-
 ---
 
 ## Security Considerations
@@ -295,8 +279,8 @@ Offset │ Size │ Field              │ Value
 | Threat | Capability | Mitigation |
 |--------|-----------|-----------|
 | **Eavesdropping** | Passive RF sniffing | XChaCha20-Poly1305 AEAD encryption, forward secrecy |
-| **Spoofing** | Forge packets or impersonate a Node ID | Ed25519 signatures; KeyAnnouncement bound to claimed Node ID; invalid sigs dropped |
-| **Replay** | Reuse old messages | Per-originator sequence numbers, strictly enforced independent of auth |
+| **Spoofing** | Forge packets | Ed25519 signatures, invalid sigs dropped |
+| **Replay** | Reuse old messages | Sequence numbers, timestamps in OGMs |
 | **Jamming** | Disrupt BLE/WiFi | Frequency hopping (channels 37/38/39), adaptive scan |
 | **Device Seizure** | Physical compromise | SQLCipher at rest (key in Android Keystore), PIN/password protection |
 | **Identity Loss** | Lost device | 12-word BIP39 mnemonic recovery (manual process) |
@@ -304,17 +288,10 @@ Offset │ Size │ Field              │ Value
 ### No Backdoors
 
 - ✅ All code open-source (AGPL v3)
-- ✅ Cryptography via audited libraries (`vodozemac` for X3DH/Double Ratchet, `libsodium` for signing/AEAD), not custom-built ratchets
+- ✅ Cryptography via audited libsodium, not custom implementations
 - ✅ No telemetry, analytics, or crash reporting to external services
 - ✅ No phoning home, no implicit network calls
 - ✅ Zero embedded accounts, no hardcoded keys
-
-### Known Gaps (as of this audit — see `RUST_ENGINE_AUDIT.md` for detail)
-
-- Emergency broadcasts (SOS) fall back to plaintext when no session exists yet with a recipient — a deliberate delivery-guarantee tradeoff that should be visible to the user, not just documented in code.
-- Peer purge resets replay-sequence tracking for that peer, creating a narrow window for old-sequence replay from a rejoining peer.
-- `sodiumoxide` (crypto dependency) is unmaintained upstream — no known vulnerability today, but a supply-chain risk worth a migration plan.
-- No formal third-party security audit has been performed yet (see Roadmap).
 
 ---
 
@@ -359,17 +336,14 @@ RezvanMesh/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── identity.rs
-│   │       ├── hkdf.rs
-│   │       ├── sign.rs
-│   │       └── sender_key.rs         # group/channel crypto (not yet wired)
+│   │       ├── x3dh.rs
+│   │       └── ratchet.rs
 │   └── rezvan-core/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs                # JNI entry points
 │           ├── engine.rs
 │           ├── routing.rs
-│           ├── session.rs            # X3DH/Double Ratchet via vodozemac
-│           ├── action.rs
 │           └── power.rs
 ├── scripts/
 │   ├── build_rust.sh
@@ -412,11 +386,10 @@ adb logcat -s RezvanMesh | grep -E "GATT|MESSAGE|ROUTE"
 
 ### Testing Strategy
 
-**Unit Tests (Rust):** 65 tests across the workspace, including spoofing, replay, malformed-input, and cryptographic correctness cases.
+**Unit Tests (Rust):**
 ```bash
 cargo test -p rezvan-core
 cargo test -p rezvan-crypto
-cargo test -p rezvan-common
 ```
 
 **Integration Tests (Manual, pending automation):**
@@ -446,7 +419,7 @@ cargo test -p rezvan-common
 ### Deferred to v1.1
 
 - **WiFi Direct Transport** – Stubs only; low priority for initial release
-- **Channel/Group Messaging** – Sender-key crypto implemented and tested; UI/DB scaffolding and routing logic exist; not yet wired end-to-end
+- **Channel/Group Messaging** – UI/DB scaffolding exists, routing logic works, not yet wired
 - **File Transfer** – Design exists, not implemented
 - **Satellite Mode (LoRa)** – Out of scope; BLE-only for now
 
@@ -454,8 +427,8 @@ cargo test -p rezvan-common
 
 - **Min SDK 26** (Android 8.0) – Earlier versions lack required BLE APIs
 - **BLE Range** – ~100 meters outdoor LoS, ~10-20 meters indoors
-- **Jamming Resistance** – Frequency hopping helps, but a determined attacker with a wideband jammer can still disrupt the network
-- **No Self-Destruct** – Messages don't auto-delete; encryption at rest is the primary protection
+- **Jamming Resistance** – Frequency hopping helps, but determined attacker with wideband jammer can disrupt
+- **No Self-Destruct** – Messages don't auto-delete; encryption at rest is primary protection
 
 ---
 
@@ -515,7 +488,7 @@ jarsigner -verify -verbose rezvan.apk
 - **Security first** – Crypto bugs are life-threatening in this context
 - **Simplicity over cleverness** – Maintainability is critical for long-term audits
 - **Privacy by default** – No telemetry, no external calls, no shortcuts
-- **Respect for users** – Iranians relying on this during blackouts; failures = isolation
+- **Respect for users** – iranians relying on this during blackouts; failures = isolation
 
 ### Contributing Guidelines
 
@@ -528,7 +501,7 @@ jarsigner -verify -verbose rezvan.apk
 ### Team Structure (Current)
 
 - **Team A (Core):** Rust mesh engine, routing, power logic
-- **Team B (Crypto):** libsodium/vodozemac integration, key exchange, Double Ratchet
+- **Team B (Crypto):** libsodium integration, key exchange, Double Ratchet
 - **Team C (Radio):** BLE/WiFi Direct radio control, action dispatch
 - **Team D (UI):** Compose screens, SQLCipher, identity backup
 - **Team E (Build):** CI/CD, Gradle, cross-compilation, signing
@@ -542,14 +515,13 @@ jarsigner -verify -verbose rezvan.apk
 - **Team_*.txt** – Detailed work packages for each module
 - **Appendix_*.txt** – Downstream issues, sodiumoxide API notes, debug observations
 - **Debug_Appendix.html** – Development environment constraints, debug phases
-- **RUST_ENGINE_AUDIT.md** – Full manual audit of the Rust engine (this repository)
 
 ---
 
 ## Roadmap
 
 ### v1.0 (Beta, Target: June 2026)
-- ✅ Mesh routing (BATMAN-Adv style)
+- ✅ Mesh routing (BATMAN-Adv)
 - ✅ Text messaging (encrypted)
 - ✅ Voice broadcast (Opus codec)
 - ✅ Emergency alerts (SOS)
@@ -558,18 +530,17 @@ jarsigner -verify -verbose rezvan.apk
 - 🔲 WiFi Direct transport
 
 ### v1.1 (Production, Target: Q3 2026)
-- 🔲 Channel/group messaging (wire up existing sender-key crypto)
+- 🔲 Channel/group messaging
 - 🔲 File transfer (chunked, resumable)
 - 🔲 WiFi Direct integration
 - 🔲 Improved UI (Material 3 polish)
 - 🔲 Performance optimization (routing convergence)
-- 🔲 Migrate off unmaintained `sodiumoxide` dependency
 
 ### v2.0 (Long-term)
 - 🔲 LoRa/Satellite integration
 - 🔲 Desktop client (Linux/macOS relay)
 - 🔲 Peer reputation/sybil resistance
-- 🔲 Formal third-party security audit
+- 🔲 Formal security audit
 
 ---
 
@@ -593,7 +564,6 @@ jarsigner -verify -verbose rezvan.apk
 ## Acknowledgments
 
 - **libsodium authors** – Cryptographic foundation
-- **vodozemac / Matrix.org team** – Audited X3DH + Double Ratchet implementation
 - **Signal Protocol team** – Double Ratchet specification
 - **BATMAN-Adv maintainers** – Routing protocol inspiration
 - **Android community** – Jetpack Compose, Room, BLE best practices
@@ -603,6 +573,6 @@ jarsigner -verify -verbose rezvan.apk
 
 ## Disclaimer
 
-**Use at your own risk.** While Rezvan Mesh is designed with security and privacy in mind, no software is perfect. The developers assume no liability for misuse, data loss, or communication failures. Always have a backup communication plan. Encryption is strong, but determined adversaries with physical access to devices or wideband jamming capability may still disrupt the network. This project has not yet undergone a formal third-party security audit — treat it as beta software under active hardening.
+**Use at your own risk.** While Rezvan Mesh is designed with security and privacy in mind, no software is perfect. The developers assume no liability for misuse, data loss, or communication failures. Always have a backup communication plan. Encryption is strong, but determined adversaries with physical access to devices or wideband jamming capability may still disrupt the network.
 
 For Iranian users during internet shutdown

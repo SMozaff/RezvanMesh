@@ -196,24 +196,20 @@ fun SettingsScreen(
         }
     }
 
-    // ---- Language Dialog (currently English + Farsi only -- see
-    // LocaleHelper.SUPPORTED for why the other resource files still exist
-    // but aren't offered here) ----
+    // ---- Language Dialog (all 5 languages) ----
     if (showLanguageDialog) {
         AlertDialog(
             onDismissRequest = { showLanguageDialog = false },
             title = { Text(stringResource(R.string.select_language)) },
             text = {
                 Column {
-                    val languageNames = mapOf(
+                    listOf(
                         "en" to stringResource(R.string.language_english),
                         "fa" to stringResource(R.string.language_farsi),
                         "ar" to stringResource(R.string.language_arabic),
                         "ur" to stringResource(R.string.language_urdu),
                         "ks" to stringResource(R.string.language_kashmiri)
-                    )
-                    LocaleHelper.SUPPORTED.map { code -> code to (languageNames[code] ?: code) }
-                        .forEach { (code, name) ->
+                    ).forEach { (code, name) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

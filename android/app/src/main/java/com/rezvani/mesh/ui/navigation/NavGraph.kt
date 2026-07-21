@@ -76,15 +76,7 @@ fun NavGraph(
                         "settings" -> navController.switchTab("settings")
                         else       -> navController.switchTab("network")
                     }
-                },
-                // Plain push (not switchTab): diagnostics isn't a bottom-nav
-                // tab, it's a secondary screen, so a normal popBackStack()
-                // from it correctly lands back on THIS Advanced Monitoring
-                // screen -- not on whatever tab Advanced Monitoring itself
-                // was opened from. Settings already reaches diagnostics the
-                // same way (plain navigate("diagnostics")), so both entry
-                // points share one correctly-behaving back button.
-                onNavigateToDiagnostics = { navController.navigate("diagnostics") }
+                }
             )
         }
         composable(
@@ -123,12 +115,7 @@ fun NavGraph(
                     ?.getStateFlow<String?>("qr_scan_result_channel", null)
             )
         }
-        // NOTE: "messages" route removed -- nothing anywhere in the app
-        // navigated to it (confirmed via full-repo search), and it appears
-        // to be an earlier prototype superseded by the real ChatsScreen /
-        // ChatDetailScreen pipeline (chats tab + chat_detail/{id}/{name}).
-        // MessagesScreen.kt itself was left untouched in case it's still
-        // wanted for something -- only the unreachable route was removed.
+        composable("messages") { MessagesScreen(meshConnection) }
         composable("contacts") {
             ContactsScreen(
                 meshConnection = meshConnection,
@@ -138,8 +125,7 @@ fun NavGraph(
                 onScanQr = { navController.navigate("qr_scanner/contact") },
                 contactQrScanResult = navController.currentBackStackEntry
                     ?.savedStateHandle
-                    ?.getStateFlow<String?>("qr_scan_result_contact", null),
-                onNavigateBackToChats = { navController.popBackStack() }
+                    ?.getStateFlow<String?>("qr_scan_result_contact", null)
             )
         }
         composable(

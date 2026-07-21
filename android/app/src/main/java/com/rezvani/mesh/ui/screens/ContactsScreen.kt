@@ -31,8 +31,7 @@ fun ContactsScreen(
     meshConnection: MeshServiceConnection,
     onOpenChat: ((conversationId: String, contactName: String) -> Unit)? = null,
     onScanQr: () -> Unit = {},
-    contactQrScanResult: StateFlow<String?>? = null,
-    onNavigateBackToChats: () -> Unit = {}
+    contactQrScanResult: StateFlow<String?>? = null
 ) {
     val context = LocalContext.current
     val repository = remember { ContactsRepository(context) }
@@ -78,15 +77,15 @@ fun ContactsScreen(
         topBar = {
             if (isInSelectionMode) {
                 TopAppBar(
-                    title = { Text(stringResource(R.string.n_selected, selectedContacts.size)) },
+                    title = { Text("${selectedContacts.size} selected") },
                     navigationIcon = {
                         IconButton(onClick = { selectedContacts = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cancel_selection))
+                            Icon(Icons.Default.Close, contentDescription = "Cancel")
                         }
                     },
                     actions = {
                         IconButton(onClick = { showDeleteConfirm = true }) {
-                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete),
+                            Icon(Icons.Default.Delete, contentDescription = "Delete",
                                 tint = MaterialTheme.colorScheme.error)
                         }
                     },
@@ -95,20 +94,15 @@ fun ContactsScreen(
                 )
             } else {
                 TopAppBar(
-                    title = { Text(stringResource(R.string.contacts_title)) },
-                    navigationIcon = {
-                        IconButton(onClick = { onNavigateBackToChats() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
-                    },
+                    title = { Text("Contacts") },
                     actions = {
                         // GAP 3: scan QR code
                         IconButton(onClick = { onScanQr() }) {
-                            Icon(Icons.Default.QrCodeScanner, contentDescription = stringResource(R.string.scan_qr_code))
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR")
                         }
                         if (ownNodeIdHex.isNotBlank()) {
                             IconButton(onClick = { showOwnQr = true }) {
-                                Icon(Icons.Default.QrCode, contentDescription = stringResource(R.string.my_qr))
+                                Icon(Icons.Default.QrCode, contentDescription = "My QR")
                             }
                         }
                     }
@@ -119,7 +113,7 @@ fun ContactsScreen(
             if (!isInSelectionMode) {
                 FloatingActionButton(onClick = { showAddDialog = true },
                     containerColor = MaterialTheme.colorScheme.primary) {
-                    Icon(Icons.Default.PersonAdd, contentDescription = stringResource(R.string.add_contact_desc))
+                    Icon(Icons.Default.PersonAdd, contentDescription = "Add contact")
                 }
             }
         }
@@ -131,15 +125,15 @@ fun ContactsScreen(
                     Icon(Icons.Default.People, contentDescription = null,
                         modifier = Modifier.size(64.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    Text(stringResource(R.string.no_contacts_yet), style = MaterialTheme.typography.bodyLarge,
+                    Text("No contacts yet", style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.scan_peer_qr_or_add),
+                    Text("Scan a peer's QR code or tap +",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                     OutlinedButton(onClick = { onScanQr() }) {
                         Icon(Icons.Default.QrCodeScanner, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.scan_qr_code))
+                        Text("Scan QR code")
                     }
                 }
             }
@@ -174,9 +168,9 @@ fun ContactsScreen(
     // Delete confirmation
     if (showDeleteConfirm) {
         ConfirmationDialog(
-            title = stringResource(R.string.delete_contacts_title),
-            message = stringResource(R.string.remove_n_contacts, selectedContacts.size),
-            confirmText = stringResource(R.string.delete), cancelText = stringResource(R.string.cancel),
+            title = "Delete Contacts",
+            message = "Remove ${selectedContacts.size} contact(s)?",
+            confirmText = "Delete", cancelText = "Cancel",
             onConfirm = {
                 selectedContacts.forEach { repository.deleteContact(it) }
                 selectedContacts = emptySet()
@@ -191,26 +185,26 @@ fun ContactsScreen(
     if (showAddDialog) {
         AlertDialog(
             onDismissRequest = { showAddDialog = false; newContactName = ""; manualNodeId = "" },
-            title = { Text(stringResource(R.string.add_contact)) },
+            title = { Text("Add Contact") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(value = newContactName,
                         onValueChange = { newContactName = it },
-                        label = { Text(stringResource(R.string.contact_name_label)) }, singleLine = true,
+                        label = { Text("Contact name") }, singleLine = true,
                         modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(
                         value = manualNodeId,
                         onValueChange = { manualNodeId = it.lowercase().filter { c -> c.isLetterOrDigit() } },
-                        label = { Text(stringResource(R.string.node_id_hint)) }, singleLine = true,
+                        label = { Text("Node ID (16 hex chars)") }, singleLine = true,
                         isError = manualNodeId.isNotEmpty() && manualNodeId.length != 16,
                         supportingText = if (manualNodeId.isNotEmpty() && manualNodeId.length != 16)
-                            { { Text(stringResource(R.string.node_id_length_error)) } } else null,
+                            { { Text("Must be exactly 16 hex characters") } } else null,
                         modifier = Modifier.fillMaxWidth())
                     if (manualNodeId.isEmpty()) {
                         TextButton(onClick = { showAddDialog = false; onScanQr() }) {
                             Icon(Icons.Default.QrCodeScanner, null, Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.or_scan_qr_instead))
+                            Text("Or scan QR code instead")
                         }
                     }
                 }
@@ -224,12 +218,12 @@ fun ContactsScreen(
                         showAddDialog = false
                     }
                 }, enabled = newContactName.isNotBlank() && manualNodeId.length == 16) {
-                    Text(stringResource(R.string.save))
+                    Text("Save")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showAddDialog = false; newContactName = ""; manualNodeId = "" }) {
-                    Text(stringResource(R.string.cancel))
+                    Text("Cancel")
                 }
             }
         )
@@ -238,32 +232,32 @@ fun ContactsScreen(
     // QR scan error
     showScanError?.let { err ->
         AlertDialog(onDismissRequest = { showScanError = null },
-            title = { Text(stringResource(R.string.scan_failed)) },
+            title = { Text("Scan failed") },
             text = { Text(err) },
-            confirmButton = { TextButton(onClick = { showScanError = null }) { Text(stringResource(R.string.ok)) } })
+            confirmButton = { TextButton(onClick = { showScanError = null }) { Text("OK") } })
     }
 
     // Own QR dialog
     if (showOwnQr && ownNodeIdHex.isNotBlank()) {
         AlertDialog(
             onDismissRequest = { showOwnQr = false },
-            title = { Text(stringResource(R.string.your_mesh_id)) },
+            title = { Text("Your Mesh ID") },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val bmp = remember(ownNodeIdHex) { BarcodeUtils.generateQrCodeBitmap(ownNodeIdHex) }
                     bmp?.let {
                         androidx.compose.foundation.Image(bitmap = it.asImageBitmap(),
-                            contentDescription = stringResource(R.string.qr_image_desc), modifier = Modifier.size(200.dp))
+                            contentDescription = "QR", modifier = Modifier.size(200.dp))
                     }
                     Text(ownNodeIdHex, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.share_qr_to_add_you),
+                    Text("Share this QR code so others can add you.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
-            confirmButton = { TextButton(onClick = { showOwnQr = false }) { Text(stringResource(R.string.close)) } }
+            confirmButton = { TextButton(onClick = { showOwnQr = false }) { Text("Close") } }
         )
     }
 }
@@ -295,7 +289,7 @@ private fun ContactListItem(contact: Contact, isSelected: Boolean,
         },
         trailingContent = {
             if (!isInSelectionMode) {
-                Icon(Icons.Default.ChevronRight, contentDescription = stringResource(R.string.open_chat_desc),
+                Icon(Icons.Default.ChevronRight, contentDescription = "Open chat",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
