@@ -1,26 +1,5 @@
 //! Pairwise beacon authentication.
 //!
-//! **SUPERSEDED**: `engine.rs` no longer calls this module. It was replaced
-//! by `epoch_key.rs`'s network-wide shared key scheme (explicit product
-//! decision: robustness/verifiability over limiting a compromised device's
-//! blast radius -- see that module's docs for the full design and
-//! rationale). The scheme documented below turned out to be broken in
-//! practice, not just "unverifiable by design": the sender computed its half
-//! of the ECDH against a placeholder all-zero key rather than any real
-//! recipient's key (BLE broadcasts have no single addressable recipient to
-//! target), so no real receiver's independently-computed shared secret could
-//! ever match what the sender produced -- verification failed for everyone,
-//! always, even between two peers who'd fully exchanged keys.
-//!
-//! Left in the codebase (not deleted) as a reference for the per-pair
-//! authentication pattern, which IS the right approach for genuinely
-//! addressed (non-broadcast) communication -- see how the same
-//! ECDH+HKDF+truncated-HMAC shape could still apply to a future point-to-point
-//! transport. Do not wire this back into beacon handling without fixing the
-//! fundamental broadcast-recipient-targeting problem described above first.
-//!
-//! ---
-//!
 //! `AdvBeaconExt` is a legacy-BLE advertisement with a hard 24-byte payload
 //! budget -- there is no room for a real Ed25519 signature (64 bytes). What
 //! *does* fit is a short keyed MAC, so this module derives a per-ordered-pair

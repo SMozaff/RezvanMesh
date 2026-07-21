@@ -88,7 +88,7 @@ impl RoutingTable {
     /// from `SessionManager`, which `RoutingTable` deliberately has no
     /// access to (keeping crypto verification and routing-table bookkeeping
     /// separate). The caller (`MeshEngine::process_incoming`) MUST verify
-    /// the beacon via `rezvan_crypto::epoch_key::verify_tag` -- or confirm
+    /// the beacon via `rezvan_crypto::beacon_mac::verify_tag` -- or confirm
     /// the sender is not yet known and treat this as discovery-only -- before
     /// calling this function with `verified = true`.
     ///

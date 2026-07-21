@@ -19,9 +19,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.MeshServiceConnection
+import com.rezvani.mesh.R
 import com.rezvani.mesh.ui.viewmodel.StatusViewModel
 import com.rezvani.mesh.utils.BarcodeUtils
 import kotlin.math.cos
@@ -43,7 +45,7 @@ fun NetworkScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Rezvan Mesh") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     // Battery in Network screen (moved from Chats)
                     BatteryStatusChip(
@@ -53,7 +55,7 @@ fun NetworkScreen(
                     Spacer(Modifier.width(4.dp))
                     if (ownNodeIdHex.isNotBlank()) {
                         IconButton(onClick = { showQrDialog = true }) {
-                            Icon(Icons.Default.QrCode2, contentDescription = "My Mesh ID")
+                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.my_mesh_id_desc))
                         }
                     }
                 },
@@ -80,13 +82,13 @@ fun NetworkScreen(
                 )
             }
             item {
-                Text("Nearby", style = MaterialTheme.typography.titleMedium,
+                Text(stringResource(R.string.nearby_title), style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface)
             }
             if (uiState.nodeCount == 0) {
                 item {
                     Text(
-                        "No devices nearby yet. Keep the app open - discovery runs in the background.",
+                        stringResource(R.string.no_devices_nearby),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -100,7 +102,7 @@ fun NetworkScreen(
                 OutlinedButton(onClick = onOpenAdvanced, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Analytics, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Advanced network monitoring")
+                    Text(stringResource(R.string.advanced_network_monitoring))
                 }
             }
         }
@@ -109,20 +111,20 @@ fun NetworkScreen(
     if (showQrDialog && ownNodeIdHex.isNotBlank()) {
         AlertDialog(
             onDismissRequest = { showQrDialog = false },
-            title = { Text("Your Mesh ID") },
+            title = { Text(stringResource(R.string.your_mesh_id)) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val bmp = remember(ownNodeIdHex) { BarcodeUtils.generateQrCodeBitmap(ownNodeIdHex) }
                     bmp?.let {
                         androidx.compose.foundation.Image(bitmap = it.asImageBitmap(),
-                            contentDescription = "QR", modifier = Modifier.size(200.dp))
+                            contentDescription = stringResource(R.string.qr_image_desc), modifier = Modifier.size(200.dp))
                     }
                     Text(ownNodeIdHex, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
-            confirmButton = { TextButton(onClick = { showQrDialog = false }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { showQrDialog = false }) { Text(stringResource(R.string.close)) } }
         )
     }
 }
@@ -152,7 +154,7 @@ fun BatteryStatusChip(level: Int, charging: Boolean) {
                         level <= 60 -> Icons.Default.Battery4Bar
                         else -> Icons.Default.BatteryFull
                     },
-                contentDescription = "Battery",
+                contentDescription = stringResource(R.string.battery_desc),
                 tint = color,
                 modifier = Modifier.size(16.dp)
             )
@@ -274,8 +276,8 @@ private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, s
 @Composable
 private fun PeerRow(index: Int, signal: String) {
     ListItem(
-        headlineContent = { Text("Peer ${index + 1}") },
-        supportingContent = { Text("Connected", style = MaterialTheme.typography.bodySmall,
+        headlineContent = { Text(stringResource(R.string.peer_n, index + 1)) },
+        supportingContent = { Text(stringResource(R.string.connected_status), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingContent = {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,

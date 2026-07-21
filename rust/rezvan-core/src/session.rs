@@ -61,14 +61,6 @@ pub struct SessionManager {
     /// audit finding #9: one-time keys were previously advertised forever
     /// without rotation).
     otk_advertise_index: usize,
-    /// Network-wide shared beacon-authentication key + its epoch number (see
-    /// rezvan_crypto::epoch_key module docs for the full design rationale).
-    /// `None` until either (a) this device bootstraps a brand-new mesh with
-    /// no prior key from anyone, or (b) it learns one from a peer's
-    /// KeyAnnouncement. Every device that has done at least one
-    /// KeyAnnouncement exchange ends up holding this.
-    epoch_key: Option<[u8; 32]>,
-    epoch_number: u32,
 }
 
 impl SessionManager {
@@ -84,72 +76,7 @@ impl SessionManager {
             peer_keys: HashMap::new(),
             channel_keys: HashMap::new(),
             otk_advertise_index: 0,
-            epoch_key: None,
-            epoch_number: 0,
         }
-    }
-
-    /// Ensures this device has SOME epoch key, generating a fresh one if it
-    /// doesn't have one yet (bootstrapping a brand-new mesh with no prior
-    /// key from any peer). Idempotent: does nothing if we already have one
-    /// (from a prior bootstrap or from learning one via KeyAnnouncement).
-    /// Called lazily the first time `key_bundle()` needs to advertise one.
-    fn ensure_epoch_key(&mut self) {
-        if self.epoch_key.is_none() {
-            self.epoch_key = Some(rezvan_crypto::epoch_key::generate_seed_key());
-            self.epoch_number = 0;
-        }
-    }
-
-    /// Learn a peer's epoch key/number from their KeyAnnouncement bundle, and
-    /// converge onto whichever one is "ahead":
-    ///   - If we have no epoch key at all yet, adopt theirs outright.
-    ///   - If theirs is at a later epoch than ours, ratchet OUR key forward
-    ///     to catch up (this recovers the same key they have, since the
-    ///     ratchet is deterministic -- see epoch_key::advance_to).
-    ///   - If ours is later than theirs (they're behind, e.g. rejoining after
-    ///     being offline), we keep ours -- they'll catch up when they see a
-    ///     KeyAnnouncement from someone ahead, including possibly us.
-    ///   - If we're at the same epoch, no-op (should already match, since
-    ///     the ratchet is deterministic from a shared history).
-    fn converge_epoch_key(&mut self, their_epoch: u32, their_key: [u8; 32]) {
-        match self.epoch_key {
-            None => {
-                self.epoch_key = Some(their_key);
-                self.epoch_number = their_epoch;
-            }
-            Some(our_key) => {
-                if their_epoch > self.epoch_number {
-                    if let Some(caught_up) = rezvan_crypto::epoch_key::advance_to(&our_key, self.epoch_number, their_epoch) {
-                        self.epoch_key = Some(caught_up);
-                        self.epoch_number = their_epoch;
-                    }
-                    // If advance_to returned None (implausible gap), keep our
-                    // current key/epoch rather than adopting an unverified
-                    // one blindly -- see epoch_key::MAX_RATCHET_STEPS.
-                }
-                // their_epoch <= self.epoch_number: nothing to do.
-            }
-        }
-    }
-
-    /// Locally advance our epoch by one ratchet step. Call periodically
-    /// (see rezvan_crypto::epoch_key::EPOCH_DURATION_SECS) from the engine's
-    /// tick() cadence. No-op if we don't have an epoch key yet.
-    pub fn advance_epoch(&mut self) {
-        if let Some(key) = self.epoch_key {
-            self.epoch_key = Some(rezvan_crypto::epoch_key::ratchet_forward(&key));
-            self.epoch_number += 1;
-        }
-    }
-
-    /// Current epoch key + number, for computing/verifying beacon tags.
-    /// `None` if we haven't bootstrapped or learned one yet (e.g. brand new
-    /// install with zero peers ever seen) -- callers must treat that as "no
-    /// beacon authentication possible yet", same as the old per-pair scheme's
-    /// "sender unknown" case.
-    pub fn epoch_key(&self) -> Option<([u8; 32], u32)> {
-        self.epoch_key.map(|k| (k, self.epoch_number))
     }
 
     /// Generate a new random shared key for a channel and store it. Called
@@ -220,17 +147,6 @@ impl SessionManager {
     /// switch to an explicit per-key advertised/unadvertised set once
     /// vodozemac's key-ID API is confirmed (not done here to avoid guessing
     /// at that API's exact shape without access to its docs).
-    /// Our bundle to advertise: Olm identity key (32) ++ Olm one-time key (32)
-    /// ++ mesh X25519 identity key (32) ++ mesh Ed25519 identity key (32) ++
-    /// beacon epoch number (4) ++ beacon epoch key (32) = 164 bytes total.
-    /// Kotlin broadcasts this in a KeyAnnouncement and embeds it in the QR
-    /// code. The mesh identity keys let peers verify MeshPacketHeader
-    /// signatures (security audit finding #3 / Fix 3); the epoch
-    /// number/key let peers verify beacon MACs via the network-wide shared
-    /// key scheme (see rezvan_crypto::epoch_key -- this superseded an
-    /// earlier per-pair ECDH scheme that turned out to be broken for
-    /// broadcast beacons, since there's no single addressable recipient to
-    /// target).
     pub fn key_bundle(&mut self) -> Vec<u8> {
         if self.account.one_time_keys().is_empty() {
             self.account.generate_one_time_keys(20);
@@ -256,30 +172,18 @@ impl SessionManager {
             .unwrap_or([0u8; 32]);
         self.otk_advertise_index += 1;
 
-        // Bootstrap our own epoch key if we've never had one from anyone --
-        // every device that advertises a KeyAnnouncement must carry SOME
-        // epoch key/number, since receivers need it to authenticate our
-        // beacons (see rezvan_crypto::epoch_key module docs).
-        self.ensure_epoch_key();
-        let epoch_key = self.epoch_key.expect("ensure_epoch_key just guaranteed this is Some");
-        let epoch_number = self.epoch_number;
-
-        let mut out = Vec::with_capacity(164);
+        let mut out = Vec::with_capacity(128);
         out.extend_from_slice(&olm_identity);
         out.extend_from_slice(&one_time);
         out.extend_from_slice(&self.identity.public_x25519);
         out.extend_from_slice(&self.identity.public_ed25519);
-        out.extend_from_slice(&epoch_number.to_be_bytes());
-        out.extend_from_slice(&epoch_key);
         out
     }
 
     /// Store a peer's advertised bundle: olm_identity(32) ++ one_time(32) ++
-    /// x25519_identity(32) ++ ed25519_identity(32) ++ epoch_number(4) ++
-    /// epoch_key(32) = 164 bytes. Also converges our own epoch key toward
-    /// theirs if theirs is further along (see `converge_epoch_key`).
+    /// x25519_identity(32) ++ ed25519_identity(32) = 128 bytes.
     pub fn register_peer_keys(&mut self, peer: &NodeId, bundle: &[u8]) -> bool {
-        if bundle.len() < 164 {
+        if bundle.len() < 128 {
             return false;
         }
         let mut olm_id = [0u8; 32];
@@ -290,11 +194,6 @@ impl SessionManager {
         ot.copy_from_slice(&bundle[32..64]);
         x25519_id.copy_from_slice(&bundle[64..96]);
         ed25519_id.copy_from_slice(&bundle[96..128]);
-
-        let their_epoch = u32::from_be_bytes([bundle[128], bundle[129], bundle[130], bundle[131]]);
-        let mut their_epoch_key = [0u8; 32];
-        their_epoch_key.copy_from_slice(&bundle[132..164]);
-        self.converge_epoch_key(their_epoch, their_epoch_key);
 
         self.peer_keys.insert(
             *peer,
@@ -426,8 +325,8 @@ mod tests {
         let bundle1 = mgr.key_bundle();
         let bundle2 = mgr.key_bundle();
 
-        assert_eq!(bundle1.len(), 164, "bundle grew to 164 bytes with the epoch key/number appended");
-        assert_eq!(bundle2.len(), 164);
+        assert_eq!(bundle1.len(), 128);
+        assert_eq!(bundle2.len(), 128);
         // Olm identity key (bytes 0..32) and mesh identity keys (64..128)
         // must stay the same across calls -- only the OTK (32..64) rotates.
         assert_eq!(&bundle1[0..32], &bundle2[0..32], "olm identity key must be stable");
@@ -436,10 +335,6 @@ mod tests {
             &bundle1[32..64], &bundle2[32..64],
             "one-time key must rotate between calls, not repeat forever (finding #9)"
         );
-        // Epoch number/key (bytes 128..164) must ALSO stay stable across
-        // calls within the same session -- key_bundle() should not
-        // re-bootstrap a new epoch key every time it's called.
-        assert_eq!(&bundle1[128..164], &bundle2[128..164], "epoch key/number must be stable across key_bundle() calls");
     }
 
     #[test]
@@ -455,80 +350,5 @@ mod tests {
             let otk: [u8; 32] = bundle[32..64].try_into().unwrap();
             assert!(seen.insert(otk), "one-time key repeated within a single batch");
         }
-    }
-
-    // ---- Epoch key (network-wide beacon authentication) tests ----
-
-    #[test]
-    fn test_no_epoch_key_before_bootstrap() {
-        let identity = generate_identity(&[1u8; 32]);
-        let mgr = SessionManager::new(Box::new(SodiumCryptoProvider), identity);
-        assert!(mgr.epoch_key().is_none(), "fresh SessionManager has no epoch key until key_bundle() or converge_epoch_key() runs");
-    }
-
-    #[test]
-    fn test_key_bundle_bootstraps_epoch_key_at_zero() {
-        let identity = generate_identity(&[2u8; 32]);
-        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), identity);
-        mgr.key_bundle();
-        let (_, epoch) = mgr.epoch_key().expect("key_bundle() must bootstrap an epoch key");
-        assert_eq!(epoch, 0, "a freshly bootstrapped epoch key starts at epoch 0");
-    }
-
-    #[test]
-    fn test_converge_adopts_peer_key_when_we_have_none() {
-        let identity_a = generate_identity(&[3u8; 32]);
-        let identity_b = generate_identity(&[4u8; 32]);
-        let mut alice = SessionManager::new(Box::new(SodiumCryptoProvider), identity_a);
-        let mut bob = SessionManager::new(Box::new(SodiumCryptoProvider), identity_b);
-
-        let alice_bundle = alice.key_bundle(); // bootstraps Alice's epoch key
-        bob.register_peer_keys(&[1u8; 8], &alice_bundle);
-
-        assert_eq!(alice.epoch_key(), bob.epoch_key(), "Bob (no prior key) must adopt Alice's outright");
-    }
-
-    #[test]
-    fn test_converge_ratchets_forward_when_peer_is_ahead() {
-        let identity_a = generate_identity(&[5u8; 32]);
-        let identity_b = generate_identity(&[6u8; 32]);
-        let mut alice = SessionManager::new(Box::new(SodiumCryptoProvider), identity_a);
-        let mut bob = SessionManager::new(Box::new(SodiumCryptoProvider), identity_b);
-
-        alice.key_bundle(); // Alice bootstraps at epoch 0
-        bob.register_peer_keys(&[1u8; 8], &alice.key_bundle()); // Bob adopts epoch 0
-
-        // Advance Alice forward several epochs; Bob is now behind.
-        alice.advance_epoch();
-        alice.advance_epoch();
-        alice.advance_epoch();
-        let (_, alice_epoch) = alice.epoch_key().unwrap();
-        assert_eq!(alice_epoch, 3);
-
-        // Bob learns Alice is at epoch 3 via a fresh bundle -- must catch up
-        // by ratcheting forward, landing on the EXACT same key, not just
-        // adopting a number.
-        bob.register_peer_keys(&[1u8; 8], &alice.key_bundle());
-        assert_eq!(alice.epoch_key(), bob.epoch_key(), "Bob must ratchet forward to match Alice's epoch 3 key exactly");
-    }
-
-    #[test]
-    fn test_converge_keeps_our_key_when_we_are_ahead() {
-        let identity_a = generate_identity(&[7u8; 32]);
-        let identity_b = generate_identity(&[8u8; 32]);
-        let mut alice = SessionManager::new(Box::new(SodiumCryptoProvider), identity_a);
-        let mut bob = SessionManager::new(Box::new(SodiumCryptoProvider), identity_b);
-
-        bob.key_bundle(); // Bob bootstraps at epoch 0
-        bob.advance_epoch();
-        bob.advance_epoch();
-        let bob_key_before = bob.epoch_key();
-
-        // Alice is behind (still at epoch 0 from her own bootstrap) --
-        // Bob receiving Alice's bundle must NOT regress backward.
-        let alice_bundle = alice.key_bundle();
-        bob.register_peer_keys(&[2u8; 8], &alice_bundle);
-
-        assert_eq!(bob.epoch_key(), bob_key_before, "Bob must not regress to a peer's older epoch");
     }
 }

@@ -25,7 +25,6 @@ import com.rezvani.mesh.utils.LocaleHelper
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit,
     onNavigateToAdvanced: (() -> Unit)? = null,
     onNavigateToDiagnostics: (() -> Unit)? = null,
     viewModel: SettingsViewModel = viewModel()
@@ -196,20 +195,24 @@ fun SettingsScreen(
         }
     }
 
-    // ---- Language Dialog (all 5 languages) ----
+    // ---- Language Dialog (currently English + Farsi only -- see
+    // LocaleHelper.SUPPORTED for why the other resource files still exist
+    // but aren't offered here) ----
     if (showLanguageDialog) {
         AlertDialog(
             onDismissRequest = { showLanguageDialog = false },
             title = { Text(stringResource(R.string.select_language)) },
             text = {
                 Column {
-                    listOf(
+                    val languageNames = mapOf(
                         "en" to stringResource(R.string.language_english),
                         "fa" to stringResource(R.string.language_farsi),
                         "ar" to stringResource(R.string.language_arabic),
                         "ur" to stringResource(R.string.language_urdu),
                         "ks" to stringResource(R.string.language_kashmiri)
-                    ).forEach { (code, name) ->
+                    )
+                    LocaleHelper.SUPPORTED.map { code -> code to (languageNames[code] ?: code) }
+                        .forEach { (code, name) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

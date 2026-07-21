@@ -58,7 +58,13 @@ data class DiagnosticsUiState(
     // Category D: QR
     val qrCodecStatus: TestStatus = TestStatus.IDLE,
     val qrGenerateStatus: TestStatus = TestStatus.IDLE,
-    val outputText: String = ""
+    val outputText: String = "",
+    /** Accumulated output across a full "Run All" pass, so a saved report
+     * captures every test's detail, not just whichever ran last (outputText
+     * gets overwritten by each individual test as it completes). */
+    val runLog: String = "",
+    val saveStatus: TestStatus = TestStatus.IDLE,
+    val lastSavedFilename: String? = null
 )
 
 class DiagnosticsViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,7 +74,12 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun setOutput(text: String) {
         _uiState.value = _uiState.value.copy(outputText = text)
+        if (isRunningAll) {
+            _uiState.value = _uiState.value.copy(runLog = _uiState.value.runLog + text + "\n\n")
+        }
     }
+
+    private var isRunningAll = false
 
     // ---- Action-frame parsing (mirrors ActionDispatcher / Rust serialize_actions) ----
     // Frame: [count:1] then per action [type:1][len:2 BE][payload]
@@ -391,11 +402,9 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             val beforeSnap = MeshCore.nativeGetRoutingSnapshot(ptrB)
             val beforeCount = beforeSnap?.getOrNull(0)?.toInt()?.and(0xFF) ?: 0
 
-            // Step 1: B receives a beacon from A BEFORE any KeyAnnouncement
-            // exchange -- B has no epoch key at all yet (see
-            // rezvan_crypto::epoch_key), so verification is impossible and
-            // this must NOT influence routing (discovery-only, see
-            // process_beacon's `verified` gate).
+            // Step 1: B receives a beacon from A BEFORE learning A's keys --
+            // must NOT influence routing (unverified beacons are
+            // discovery-only, see process_beacon's `verified` gate).
             val beaconBeforeKeys = harvestBeacon(ptrA)
                 ?: return false to (log.toString() + "FAIL: A never advertised a beacon")
             MeshCore.nativeProcessIncoming(ptrB, beaconBeforeKeys, -60, nowUs())
@@ -406,9 +415,7 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
                 return false to (log.toString() + "FAIL: unverified beacon (sender unknown) affected routing table -- should be discovery-only")
             }
 
-            // Step 2: B learns A's keys via the real KeyAnnouncement receive
-            // path -- this parses A's epoch key/number out of the bundle and
-            // converges B onto it (B had none yet, so B adopts A's outright).
+            // Step 2: B learns A's keys via the real KeyAnnouncement receive path.
             MeshCore.nativeProcessIncoming(ptrB, annA.first, -50, nowUs())
             log.append("- B registered A's keys via KeyAnnouncement\n")
 
@@ -638,8 +645,8 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             val bundle2 = MeshCore.nativeGetKeyBundle(ptr)
                 ?: return false to (log.toString() + "FAIL: nativeGetKeyBundle returned null (2nd call)")
 
-            if (bundle1.size != 164 || bundle2.size != 164) {
-                return false to (log.toString() + "FAIL: bundle size != 164 (got ${bundle1.size}, ${bundle2.size})")
+            if (bundle1.size != 128 || bundle2.size != 128) {
+                return false to (log.toString() + "FAIL: bundle size != 128 (got ${bundle1.size}, ${bundle2.size})")
             }
 
             val identity1 = bundle1.copyOfRange(0, 32)
@@ -648,12 +655,6 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             val otk2 = bundle2.copyOfRange(32, 64)
             val meshKeys1 = bundle1.copyOfRange(64, 128)
             val meshKeys2 = bundle2.copyOfRange(64, 128)
-            // Epoch number (4 bytes) + epoch key (32 bytes) -- see
-            // rezvan_crypto::epoch_key. Must also stay stable across
-            // key_bundle() calls within the same session (only the OTK
-            // rotates; the epoch key only changes via advance_epoch()).
-            val epochFields1 = bundle1.copyOfRange(128, 164)
-            val epochFields2 = bundle2.copyOfRange(128, 164)
 
             if (!identity1.contentEquals(identity2)) {
                 return false to (log.toString() + "FAIL: Olm identity key changed between calls (should be stable)")
@@ -661,10 +662,7 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             if (!meshKeys1.contentEquals(meshKeys2)) {
                 return false to (log.toString() + "FAIL: mesh identity keys changed between calls (should be stable)")
             }
-            if (!epochFields1.contentEquals(epochFields2)) {
-                return false to (log.toString() + "FAIL: beacon epoch key/number changed between calls (should be stable until advance_epoch())")
-            }
-            log.append("- Olm identity key, mesh identity keys, and epoch key/number all stable across calls\n")
+            log.append("- Olm identity key and mesh identity keys stable across calls\n")
 
             if (otk1.contentEquals(otk2)) {
                 return false to (log.toString() + "FAIL: one-time key did NOT rotate between calls (this is the pre-Fix-9 bug: same OTK advertised forever)")
@@ -985,29 +983,101 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
      * which needs a second device, and is left as a separate manual button). */
     fun runAllAutomatable() {
         viewModelScope.launch {
-            runFragmentationTest()
-            delay(100)
-            runTwoEngineCryptoTest()
-            delay(100)
-            runSpoofRejectionTest()
-            delay(100)
-            runBeaconAuthTest()
-            delay(100)
-            runBroadcastTest()
-            delay(100)
-            runChannelTest()
-            delay(100)
-            runVersionGateTest()
-            delay(100)
-            runOtkRotationTest()
-            delay(100)
-            runDbTest()
-            delay(100)
-            checkBleCapability()
-            checkWifiDirectCapability()
-            checkAllPermissions()
-            runQrCodecTest()
-            runQrGenerateTest()
+            isRunningAll = true
+            _uiState.value = _uiState.value.copy(runLog = "")
+            try {
+                runFragmentationTest()
+                delay(100)
+                runTwoEngineCryptoTest()
+                delay(100)
+                runSpoofRejectionTest()
+                delay(100)
+                runBeaconAuthTest()
+                delay(100)
+                runBroadcastTest()
+                delay(100)
+                runChannelTest()
+                delay(100)
+                runVersionGateTest()
+                delay(100)
+                runOtkRotationTest()
+                delay(100)
+                runDbTest()
+                delay(100)
+                checkBleCapability()
+                checkWifiDirectCapability()
+                checkAllPermissions()
+                runQrCodecTest()
+                runQrGenerateTest()
+            } finally {
+                isRunningAll = false
+            }
         }
+    }
+
+    /**
+     * Saves the results of the most recent "Run All Automatable Tests" pass
+     * as a plain .txt file in the device's public Downloads folder (see
+     * DiagnosticsExporter). Includes a pass/fail summary table (every test's
+     * current status, whether or not it was part of the last Run All) plus
+     * the full accumulated per-test output from that run.
+     */
+    fun saveResults() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(saveStatus = TestStatus.RUNNING)
+            val app = getApplication<Application>()
+            val report = buildReportText()
+            val filename = com.rezvani.mesh.utils.DiagnosticsExporter.saveReport(app, report)
+            if (filename != null) {
+                _uiState.value = _uiState.value.copy(saveStatus = TestStatus.PASS, lastSavedFilename = filename)
+            } else {
+                _uiState.value = _uiState.value.copy(saveStatus = TestStatus.FAIL, lastSavedFilename = null)
+            }
+        }
+    }
+
+    private fun buildReportText(): String {
+        val s = _uiState.value
+        val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        val sb = StringBuilder()
+        sb.append("RezvanMesh Diagnostics Report\n")
+        sb.append("Generated: $now\n")
+        sb.append("Device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\n")
+        sb.append("=".repeat(60)).append("\n\n")
+
+        sb.append("SUMMARY\n").append("-".repeat(60)).append("\n")
+        val summary = listOf(
+            "Fragmentation" to s.fragStatus,
+            "1:1 crypto round-trip" to s.cryptoStatus,
+            "KeyAnnouncement spoofing rejection" to s.spoofRejectStatus,
+            "Beacon MAC authentication" to s.beaconAuthStatus,
+            "Emergency broadcast round-trip" to s.broadcastStatus,
+            "Channel messaging round-trip" to s.channelStatus,
+            "Wire-version mismatch rejection" to s.versionGateStatus,
+            "One-time-key rotation" to s.otkRotationStatus,
+            "Database passphrase + open" to s.dbStatus,
+            "BLE capability + permissions" to s.bleCapabilityStatus,
+            "WiFi-Direct capability" to s.wifiDirectCapabilityStatus,
+            "Full permission audit" to s.permissionsStatus,
+            "Loopback capture" to s.loopbackStatus,
+            "Mock peer injection" to s.injectStatus,
+            "Routing table" to s.routingStatus,
+            "Channel QR codec round-trip" to s.qrCodecStatus,
+            "QR bitmap generation" to s.qrGenerateStatus
+        )
+        for ((name, status) in summary) {
+            sb.append(String.format("%-42s %s\n", name, status.name))
+        }
+        sb.append("\n")
+
+        sb.append("DETAIL (most recent \"Run All\" pass)\n").append("-".repeat(60)).append("\n")
+        if (s.runLog.isNotBlank()) {
+            sb.append(s.runLog)
+        } else {
+            sb.append("(No \"Run All Automatable Tests\" pass has been run yet this session --\n")
+            sb.append("only the summary above reflects any individually-run tests.)\n")
+        }
+
+        return sb.toString()
     }
 }
