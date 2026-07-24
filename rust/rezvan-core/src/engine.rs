@@ -8,7 +8,7 @@ use rezvan_common::{
     AdvBeaconExt, DecryptedMessage, MeshPacketHeader, NodeId,
     MESH_PACKET_VERSION, MESH_PACKET_SIGNATURE_LEN,
 };
-use rezvan_crypto::{beacon_mac, CryptoProvider};
+use rezvan_crypto::CryptoProvider;
 
 pub struct MeshEngine {
     crypto: Box<dyn CryptoProvider>,
@@ -71,6 +71,20 @@ impl MeshEngine {
             self.routing.purge_stale(STALE_ROUTE_MAX_AGE_TICKS);
         }
 
+        // Advance the beacon-authentication epoch key (see
+        // rezvan_crypto::epoch_key module docs). Same ticks-as-time-proxy
+        // convention as purge_stale above: at the ~1 tick/sec fastest
+        // cadence implied by that function's "120 ticks ~ couple minutes"
+        // comment, EPOCH_DURATION_SECS (6 hours) is approximately 21,600
+        // ticks. This is a local, unsynchronized clock -- devices converge
+        // on the same epoch number over time via whatever a peer's
+        // KeyAnnouncement declares (see SessionManager::converge_epoch_key),
+        // not by all advancing in lockstep.
+        const EPOCH_ADVANCE_TICKS: u32 = 21_600;
+        if self.adv_sequence % EPOCH_ADVANCE_TICKS == 0 {
+            self.sessions.advance_epoch();
+        }
+
         let state = self.power_state;
         if !crate::power::should_advertise(state) {
             return actions;
@@ -85,8 +99,9 @@ impl MeshEngine {
             });
         }
 
-        // KeyAnnouncement every 3rd beacon (bundle now 128 bytes -- includes
-        // mesh identity keys so peers can verify our beacon MACs and packet sigs).
+        // KeyAnnouncement every 3rd beacon (bundle now 164 bytes -- includes
+        // mesh identity keys plus the network-wide beacon epoch key/number,
+        // see rezvan_crypto::epoch_key) so peers can verify our beacon MACs and packet sigs).
         if seq % (ogm_interval * 3) == 0 {
             let bundle = self.sessions.key_bundle();
             let packet = self.build_signed_packet(0x05, 1, &[0u8; 8], &bundle);
@@ -213,6 +228,9 @@ impl MeshEngine {
             // == payload_end + 64 above, so payload_end is always in bounds.
             let ed25519_key: Option<[u8; 32]> = if header.packet_type == 0x05 {
                 match raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
+                    // Bundle is 164 bytes total now (see session.rs::key_bundle),
+                    // but the embedded Ed25519 key we need here is still at the
+                    // same [96..128) offset -- checking >=128 remains correct.
                     Some(payload) if payload.len() >= 128 => {
                         let mut k = [0u8; 32];
                         k.copy_from_slice(&payload[96..128]);
@@ -369,7 +387,8 @@ impl MeshEngine {
             }
             0x05 => {
                 // KeyAnnouncement -- signature verified above (self-signed).
-                // Register the full 128-byte bundle including mesh identity keys.
+                // Register the full 164-byte bundle: mesh identity keys plus
+                // the network-wide beacon epoch key/number.
                 if let Some(payload) = raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
                     self.sessions.register_peer_keys(&header.originator, payload);
                 }
@@ -404,15 +423,31 @@ impl MeshEngine {
             }]);
         }
 
-        let verified = if let Some(their_x25519) = self.sessions.peer_x25519_identity(&beacon.originator) {
-            let our_private = self.sessions.own_x25519_private();
-            let signed = beacon.signed_bytes();
-            beacon_mac::verify_tag(&our_private, &their_x25519, &signed, &beacon.mac)
-        } else {
-            // Sender not yet known: treat as discovery-only, routing will not
-            // act on it. Log at level 1 (info) since this is expected for new
-            // peers until their KeyAnnouncement arrives.
-            false
+        // Beacon authentication (per explicit product decision: robustness
+        // over per-compromised-device blast-radius limitation -- see
+        // rezvan_crypto::epoch_key module docs for the full design). This
+        // REPLACES the earlier per-pair ECDH beacon MAC scheme, which was
+        // broken by construction: BLE advertisements are physically
+        // broadcast to an unknown audience, so there is no single
+        // recipient to target with a pairwise key, and the old scheme's
+        // sender-side placeholder key meant no real receiver could ever
+        // verify it, even after a full KeyAnnouncement exchange.
+        //
+        // Any device holding the current epoch key (or one reachable by
+        // ratcheting forward from an older epoch it has) can verify ANY
+        // sender's beacon -- this proves "produced by a mesh member who
+        // has this key", not "produced by this specific named sender".
+        let verified = match self.sessions.epoch_key() {
+            Some((our_epoch_key, _our_epoch_number)) => {
+                let signed = beacon.signed_bytes();
+                rezvan_crypto::epoch_key::verify_tag(&our_epoch_key, &signed, &beacon.mac)
+            }
+            None => {
+                // We have no epoch key at all yet (brand new install, zero
+                // peers ever seen) -- can't verify anything. Discovery-only,
+                // same as the old "sender unknown" case.
+                false
+            }
         };
 
         let changed = self.routing.process_beacon(&beacon, rssi, verified);
@@ -620,7 +655,7 @@ impl MeshEngine {
 
     fn build_advertisement(&mut self) -> Vec<u8> {
         // AdvBeaconExt v0.02: dropped ttl/peer_density/reserved to make room
-        // for the 7-byte pairwise MAC. See rezvan_crypto::beacon_mac.
+        // for the 7-byte epoch-key MAC. See rezvan_crypto::epoch_key.
         let power_state_byte = self.power_state as u8;
 
         let mut node_flags: u8 = 0;
@@ -639,24 +674,22 @@ impl MeshEngine {
             mac:         [0u8; 7],
         };
 
-        // Compute per-peer MACs lazily: for a broadcast beacon where we don't
-        // know which specific peer will receive it, we derive the MAC using our
-        // own X25519 key paired with an all-zero "public" key, producing a
-        // deterministic, verifiable tag only by nodes that know our private key
-        // -- i.e. nobody externally. This is a known, documented limitation of
-        // pairwise MACs on broadcast beacons: the tag is NOT verifiable by any
-        // receiver, providing only replay-sequence protection. The routing layer
-        // accounts for this by treating beacons as unverified until a receiver
-        // also runs the beacon-specific per-peer logic, which IS wired up on the
-        // receive side (process_beacon) using the sender's actual X25519 key
-        // once a KeyAnnouncement has been received.
+        // Beacon authentication via the network-wide epoch key (see
+        // rezvan_crypto::epoch_key module docs and process_beacon's
+        // verification side above). This replaces the earlier per-pair ECDH
+        // scheme, which computed the tag against a placeholder all-zero
+        // "peer" key -- meaning no real receiver could ever reconstruct the
+        // same shared secret, so the old MAC was broken for everyone, not
+        // just "unverifiable by design" as originally documented.
         //
-        // TODO (post-beta): switch to a per-receiver beacon per trusted peer, or
-        // a network-wide symmetric epoch key with forward secrecy, so the MAC is
-        // independently verifiable without a full GATT connection first.
-        let own_private = self.sessions.own_x25519_private();
+        // If we don't have an epoch key yet (shouldn't normally happen once
+        // key_bundle() has run at least once, since that lazily bootstraps
+        // one), fall back to an all-zero tag -- receivers without an epoch
+        // key either will also fail to verify it (consistent "unverified"
+        // outcome) and treat the beacon as discovery-only, same as before.
+        let tag_key = self.sessions.epoch_key().map(|(k, _)| k).unwrap_or([0u8; 32]);
         let signed = beacon.signed_bytes();
-        beacon.mac = beacon_mac::compute_tag(&own_private, &[0u8; 32], &signed);
+        beacon.mac = rezvan_crypto::epoch_key::compute_tag(&tag_key, &signed);
 
         beacon.serialize()
     }
@@ -754,7 +787,7 @@ mod tests {
         let mut packet = build_legit_key_announcement(&mut alice);
 
         // Corrupt one byte inside the embedded Ed25519 key region of the
-        // payload (bytes [96..128) of the 128-byte bundle, offset by header size).
+        // payload (bytes [96..128) of the now-164-byte bundle, offset by header size).
         let corrupt_offset = MeshPacketHeader::SIZE + 100;
         packet[corrupt_offset] ^= 0xFF;
 
@@ -908,8 +941,12 @@ mod tests {
         let mut alice = make_engine(1);
         let mut bob = make_engine(2);
 
-        // Bob needs to know Alice's X25519 key to verify her beacon MAC
-        // before it'll influence routing (see process_beacon's verified gate).
+        // Bob needs the shared epoch key to verify Alice's beacon MAC (see
+        // rezvan_crypto::epoch_key). register_peer_keys parses the epoch
+        // key/number out of Alice's bundle and converges Bob's own epoch key
+        // toward hers (SessionManager::converge_epoch_key) -- since Bob has
+        // no epoch key of his own yet at this point, he simply adopts hers
+        // outright, so verification succeeds immediately.
         let bundle = alice.key_bundle();
         bob.register_peer_keys(&alice.node_id, &bundle);
 
@@ -937,5 +974,142 @@ mod tests {
         assert_eq!(snap[0], 1, "one route (to Alice) expected");
         let dest = &snap[1..9];
         assert_eq!(dest, &alice.node_id);
+    }
+
+    #[test]
+    fn test_epoch_key_bootstraps_on_first_key_bundle_call() {
+        // Before key_bundle() is ever called, a fresh engine has no epoch
+        // key. The first call must bootstrap one (ensure_epoch_key), not
+        // leave it None or panic.
+        let mut alice = make_engine(1);
+        assert!(alice.sessions.epoch_key().is_none(), "no epoch key before first key_bundle() call");
+        let _bundle = alice.key_bundle();
+        assert!(alice.sessions.epoch_key().is_some(), "key_bundle() must bootstrap an epoch key");
+    }
+
+    #[test]
+    fn test_two_peers_converge_on_same_epoch_key_via_key_announcement() {
+        // THE key regression test for this fix: the OLD per-pair beacon MAC
+        // scheme was broken even between two peers who'd fully exchanged
+        // KeyAnnouncements, because the sender computed its tag against a
+        // placeholder key instead of anything a real receiver could
+        // reconstruct. This proves the new epoch-key scheme actually closes
+        // that gap: after a KeyAnnouncement exchange, both sides land on the
+        // literal same 32-byte key.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+
+        let alice_bundle = alice.key_bundle();
+        bob.register_peer_keys(&alice.node_id, &alice_bundle);
+
+        assert_eq!(
+            alice.sessions.epoch_key(),
+            bob.sessions.epoch_key(),
+            "after Bob learns Alice's bundle, both must hold the identical epoch key"
+        );
+    }
+
+    #[test]
+    fn test_beacon_verifies_end_to_end_with_shared_epoch_key() {
+        // Full round trip: Alice and Bob exchange keys, Alice ticks out a
+        // real beacon (exercising the actual build_advertisement() code
+        // path, not a hand-computed tag), and it must be VERIFIED (not just
+        // discovery-only) once Bob has converged onto Alice's epoch key --
+        // this is exactly the case the old scheme could never satisfy.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+
+        let alice_bundle = alice.key_bundle();
+        bob.register_peer_keys(&alice.node_id, &alice_bundle);
+
+        let mut alice_beacon: Option<Vec<u8>> = None;
+        for _ in 0..50 {
+            for action in alice.tick() {
+                if let Action::SendBleAdvertisement { data } = action {
+                    alice_beacon = Some(data);
+                }
+            }
+            if alice_beacon.is_some() { break; }
+        }
+        let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
+        let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
+
+        bob.process_incoming(beacon_bytes, -60, 0);
+
+        // If verification succeeded, the beacon actually influenced routing
+        // (see process_beacon's verified gate) -- confirmed via the routing
+        // snapshot, same assertion style as the existing routing test above.
+        let snap = bob.routing_snapshot();
+        assert_eq!(snap[0], 1, "verified beacon must add a route");
+    }
+
+    #[test]
+    fn test_unrelated_third_peer_also_verifies_beacon() {
+        // The defining property of the epoch-key scheme vs. the old per-pair
+        // one: Carol, who has NEVER exchanged keys directly with Alice, can
+        // still verify Alice's beacon -- as long as Carol has converged onto
+        // the same epoch key via SOME KeyAnnouncement exchange (here, with
+        // Bob, who got it from Alice). This is the "mesh membership" proof
+        // the design explicitly trades specific-sender-authentication for.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        let mut carol = make_engine(3);
+
+        let alice_bundle = alice.key_bundle();
+        bob.register_peer_keys(&alice.node_id, &alice_bundle);
+
+        let bob_bundle = bob.key_bundle();
+        carol.register_peer_keys(&bob.node_id, &bob_bundle);
+
+        assert_eq!(alice.sessions.epoch_key(), carol.sessions.epoch_key(),
+            "epoch key must propagate transitively through the mesh");
+
+        let mut alice_beacon: Option<Vec<u8>> = None;
+        for _ in 0..50 {
+            for action in alice.tick() {
+                if let Action::SendBleAdvertisement { data } = action {
+                    alice_beacon = Some(data);
+                }
+            }
+            if alice_beacon.is_some() { break; }
+        }
+        let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
+        let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
+
+        carol.process_incoming(beacon_bytes, -60, 0);
+
+        let snap = carol.routing_snapshot();
+        assert_eq!(snap[0], 1, "Carol (never met Alice directly) must still verify Alice's beacon via the shared epoch key");
+    }
+
+    #[test]
+    fn test_beacon_unverified_without_any_epoch_key() {
+        // A device that has never bootstrapped or learned an epoch key at
+        // all (zero peers ever seen) cannot verify anything -- discovery
+        // only, same as the old "sender unknown" case. This matters because
+        // key_bundle() lazily bootstraps a key; a device that has NEVER
+        // called key_bundle() (and never will, if it never sends its own
+        // KeyAnnouncement) should still fail closed rather than somehow
+        // verify against a default/empty key.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        // Deliberately do NOT exchange keys.
+
+        let mut alice_beacon: Option<Vec<u8>> = None;
+        for _ in 0..50 {
+            for action in alice.tick() {
+                if let Action::SendBleAdvertisement { data } = action {
+                    alice_beacon = Some(data);
+                }
+            }
+            if alice_beacon.is_some() { break; }
+        }
+        let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
+        let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
+
+        bob.process_incoming(beacon_bytes, -60, 0);
+
+        let snap = bob.routing_snapshot();
+        assert_eq!(snap[0], 0, "unverified beacon (no shared epoch key) must not add a route");
     }
 }

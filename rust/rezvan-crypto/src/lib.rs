@@ -3,6 +3,7 @@ pub mod sign;
 pub mod sender_key;
 pub mod hkdf;
 pub mod beacon_mac;
+pub mod epoch_key;
 
 pub use identity::IdentityKeypair;
 

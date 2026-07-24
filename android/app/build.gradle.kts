@@ -132,7 +132,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // QR
-    implementation("com.google.zxing:core:3.5.3")   // QR generation (BarcodeUtils)
+    implementation("com.google.zxing:core:3.5.4")   // QR generation (BarcodeUtils)
     // Compose-native, on-device (no network calls) QR scanner. Not
     // zxing-android-embedded's CaptureActivity: that's an XML-layout-based
     // library activity whose customization surface (theming, orientation)
@@ -140,17 +140,31 @@ dependencies {
     // resources at all. CameraX + ML Kit gives a fully Compose-native
     // scanner screen with our own branding and automatic orientation
     // handling for free (see ui/screens/QrScannerScreen.kt).
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    implementation("androidx.camera:camera-core:1.5.1")
+    implementation("androidx.camera:camera-camera2:1.5.1")
+    implementation("androidx.camera:camera-lifecycle:1.5.1")
+    implementation("androidx.camera:camera-view:1.5.1")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // Room + SQLCipher
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
-    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    // Migrated from net.zetetic:android-database-sqlcipher (deprecated,
+    // superseded in 2022, does NOT support 16KB memory page sizes) to
+    // net.zetetic:sqlcipher-android -- Google Play has required 16KB page
+    // size support for apps targeting Android 15+ (this app's targetSdk)
+    // since November 1, 2025. Confirmed via Zetetic's official migration
+    // guide (zetetic.net/sqlcipher/sqlcipher-for-android-migration) that for
+    // this app's specific usage (Room integration via a single-argument
+    // byte[] password factory constructor, see AppDatabase.kt) this is a
+    // drop-in swap: net.sqlcipher.database.SupportFactory ->
+    // net.zetetic.database.sqlcipher.SupportOpenHelperFactory, both taking
+    // the same (byte[] password) constructor -- confirmed directly against
+    // the new artifact's source. The androidx.sqlite version bump below is
+    // required by the new artifact per the same migration guide.
+    implementation("net.zetetic:sqlcipher-android:4.17.0")
+    implementation("androidx.sqlite:sqlite:2.6.2")
 
     // Security
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

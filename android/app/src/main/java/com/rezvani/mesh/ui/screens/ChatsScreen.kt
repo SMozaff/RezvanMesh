@@ -35,7 +35,6 @@ fun ChatsScreen(
     onNewMessageClick: () -> Unit,
     onNewChannelClick: () -> Unit,
     onEmergencyClick: () -> Unit,
-    onVoiceClick: () -> Unit,
     viewModel: ChatsViewModel = viewModel()
 ) {
     val conversations by viewModel.conversations.collectAsState(initial = emptyList())
@@ -54,17 +53,17 @@ fun ChatsScreen(
             if (isInSelectionMode) {
                 // Selection-mode top bar
                 TopAppBar(
-                    title = { Text(stringResource(R.string.n_selected, selectedConversations.size)) },
+                    title = { Text("${selectedConversations.size} selected") },
                     navigationIcon = {
                         IconButton(onClick = { viewModel.clearSelection() }) {
-                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cancel_selection))
+                            Icon(Icons.Default.Close, contentDescription = "Cancel selection")
                         }
                     },
                     actions = {
                         IconButton(onClick = { viewModel.deleteSelectedConversations() }) {
                             Icon(
                                 Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.delete_selected),
+                                contentDescription = "Delete selected",
                                 tint = MaterialTheme.colorScheme.error
                             )
                         }
@@ -88,16 +87,7 @@ fun ChatsScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = onNewChannelClick) {
-                            Icon(Icons.Default.Forum, contentDescription = stringResource(R.string.new_channel))
-                        }
-                        IconButton(onClick = onVoiceClick) {
-                            Icon(Icons.Default.Mic, contentDescription = stringResource(R.string.voice_broadcast_title))
-                        }
-                        IconButton(onClick = onEmergencyClick) {
-                            Icon(Icons.Default.Warning, contentDescription = stringResource(R.string.emergency_title))
-                        }
-                        IconButton(onClick = onNewMessageClick) {
+                            IconButton(onClick = onNewMessageClick) {
                             Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.new_message))
                         }
                     },

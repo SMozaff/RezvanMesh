@@ -10,7 +10,7 @@ import com.rezvani.mesh.data.dao.MessageDao
 import com.rezvani.mesh.data.entities.ChannelEntity
 import com.rezvani.mesh.data.entities.ContactEntity
 import com.rezvani.mesh.data.entities.MessageEntity
-import net.sqlcipher.database.SupportFactory
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /**
  * Main Room database for Rezvan Mesh.
@@ -79,7 +79,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private fun buildDatabase(context: Context, passphrase: ByteArray): AppDatabase {
-            val factory = SupportFactory(passphrase)
+            val factory = SupportOpenHelperFactory(passphrase)
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
