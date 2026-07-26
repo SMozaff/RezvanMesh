@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.kapt")
 }
 
@@ -77,18 +78,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // android.kotlinOptions {} removed -- deprecated since Kotlin 2.0, fully
+    // removed in Kotlin 2.2 (this project targets 2.3.0). Migrated to the
+    // top-level kotlin.compilerOptions {} DSL below, per the official
+    // migration guide (developer.android.com/build/migrate-to-built-in-kotlin).
 
     buildFeatures {
         compose     = true
         buildConfig = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
-    }
+    // composeOptions { kotlinCompilerExtensionVersion = "..." } removed --
+    // no longer valid from Kotlin 2.0+. The Compose Compiler now ships in
+    // lockstep with the Kotlin plugin itself via the
+    // org.jetbrains.kotlin.plugin.compose Gradle plugin applied above.
 
     packaging {
         resources {
@@ -108,9 +111,18 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 dependencies {
-    // Kotlin
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.22")
+    // Kotlin -- version should track the Kotlin Gradle plugin version
+    // declared in the root build.gradle.kts (2.3.0); this was previously
+    // hardcoded to 1.9.22, which would have mismatched the plugin version
+    // after the AGP/Kotlin/Gradle coordinated upgrade.
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
@@ -122,7 +134,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
 
     // Compose
-    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -180,7 +192,7 @@ dependencies {
     // Android tests
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.06.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 
     // Debug
