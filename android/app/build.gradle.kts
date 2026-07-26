@@ -2,7 +2,14 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.kapt")
+    // kotlin-kapt replaced by KSP -- see root build.gradle.kts for the full
+    // rationale (kapt's real Kotlin-2.x compatibility problems, confirmed
+    // by this exact build failure; Google's own Room docs recommend KSP for
+    // Kotlin 2.0+). Confirmed via full-repo search that Room's compiler was
+    // the ONLY thing in this project using kapt -- no other kapt(...)
+    // dependency declarations exist, so kotlin-kapt can be fully removed
+    // rather than kept alongside KSP for some other library.
+    id("com.google.devtools.ksp")
 }
 
 // ---- git provenance (used in buildConfigField below) ----
@@ -161,7 +168,8 @@ dependencies {
     // Room + SQLCipher
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    kapt("androidx.room:room-compiler:2.6.1")
+    // Migrated from kapt to ksp -- see plugins{} block comment above.
+    ksp("androidx.room:room-compiler:2.6.1")
     // Migrated from net.zetetic:android-database-sqlcipher (deprecated,
     // superseded in 2022, does NOT support 16KB memory page sizes) to
     // net.zetetic:sqlcipher-android -- Google Play has required 16KB page
@@ -200,6 +208,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
 
-kapt {
-    correctErrorTypes = true
-}
+// kapt { correctErrorTypes = true } removed -- no longer meaningful now that
+// Room's annotation processing runs via KSP instead of kapt (see plugins{}
+// block comment above). KSP resolves symbols directly from Kotlin source
+// rather than generating Java stubs, so this kapt-specific workaround has no
+// KSP equivalent -- confirmed via Google's own official kapt-to-KSP
+// migration guide (developer.android.com/build/migrate-to-ksp), which lists
+// this exact block as something to simply delete, not replace.
