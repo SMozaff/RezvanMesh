@@ -85,10 +85,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // android.kotlinOptions {} removed -- deprecated since Kotlin 2.0, fully
-    // removed in Kotlin 2.2 (this project targets 2.3.0). Migrated to the
-    // top-level kotlin.compilerOptions {} DSL below, per the official
-    // migration guide (developer.android.com/build/migrate-to-built-in-kotlin).
+    // android.kotlinOptions {} removed -- deprecated since Kotlin 2.0.0, and
+    // its deprecation level was raised to a build ERROR starting Kotlin
+    // 2.2.0 (this project targets 2.2.20) per Kotlin's own official "What's
+    // new in 2.2.0" notes. Migrated to the top-level kotlin.compilerOptions
+    // {} DSL below, per the official migration guide
+    // (developer.android.com/build/migrate-to-built-in-kotlin and
+    // kotlinlang.org/docs/gradle-compiler-options.html).
 
     buildFeatures {
         compose     = true
@@ -126,10 +129,13 @@ kotlin {
 
 dependencies {
     // Kotlin -- version should track the Kotlin Gradle plugin version
-    // declared in the root build.gradle.kts (2.3.0); this was previously
-    // hardcoded to 1.9.22, which would have mismatched the plugin version
-    // after the AGP/Kotlin/Gradle coordinated upgrade.
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.3.0")
+    // declared in the root build.gradle.kts (2.2.20, stepped back through 2.3.0 and 2.2.21 from an
+    // initial 2.3.0 attempt after a KSP/AGP version-compatibility issue --
+    // see the ksp plugin comment in root build.gradle.kts for the full
+    // story); this was previously hardcoded to 1.9.22, which would have
+    // mismatched the plugin version after the AGP/Kotlin/Gradle coordinated
+    // upgrade regardless of which exact 2.x version was ultimately chosen.
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.2.20")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
