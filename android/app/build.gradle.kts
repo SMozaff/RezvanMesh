@@ -172,10 +172,25 @@ dependencies {
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // Room + SQLCipher
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
+    //
+    // Room bumped from 2.6.1 to 2.8.4 -- NOT a routine version bump, this was
+    // required to fix a real build failure: ':android:app:kspDebugKotlin
+    // FAILED' with 'java.lang.IllegalStateException: unexpected jvm
+    // signature V'. Confirmed via multiple independent real-world bug
+    // reports (github.com/google/ksp/issues/2957, and a real project's
+    // actual fix commit) that this is a KNOWN KSP2 bug when processing Room
+    // DAO methods that are `suspend fun` with an implicit Unit return type
+    // -- which this project's DAOs use extensively (insert/update/delete
+    // methods across ChannelDao, ContactDao, MessageDao,
+    // VoiceBroadcastLogDao). The confirmed fix across multiple real reports
+    // is upgrading Room itself, not further adjusting KSP/Kotlin versions.
+    // Room requires room-runtime, room-ktx, and room-compiler to all be the
+    // EXACT SAME version (Room's own stated requirement) -- all three
+    // updated together here.
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
     // Migrated from kapt to ksp -- see plugins{} block comment above.
-    ksp("androidx.room:room-compiler:2.6.1")
+    ksp("androidx.room:room-compiler:2.8.4")
     // Migrated from net.zetetic:android-database-sqlcipher (deprecated,
     // superseded in 2022, does NOT support 16KB memory page sizes) to
     // net.zetetic:sqlcipher-android -- Google Play has required 16KB page
