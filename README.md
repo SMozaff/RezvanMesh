@@ -26,7 +26,7 @@
 - **Text Messaging** – Up to 10,000 characters per message
 - **Voice Broadcasting** – Opus codec @ 16 kbps, push-to-talk up to 60 seconds
 - **Emergency Alerts** – SOS button with 5 severity levels, network-wide flooding
-- **Offline Identity** – Deterministic seed derivation (MAC-based), 12-word BIP39 backup
+- **Offline Identity** – 32-byte `SecureRandom` seed, stored via Android Keystore-backed `EncryptedSharedPreferences` (no backup/recovery phrase exists yet — see Known Issues)
 - **Encrypted Storage** – SQLCipher database for contacts, messages, voice logs
 - **Multi-Language UI** – Farsi (primary) + English, runtime switchable
 - **Power Management** – 7-state power machine (Emergency → Hibernation) with dynamic duty cycling
@@ -86,7 +86,7 @@
 
 ### Prerequisites
 
-- **Android SDK:** API 26 (Android 8.0) or higher, target API 34
+- **Android SDK:** API 26 (Android 8.0) minimum, compile/target API 35
 - **Android NDK:** 25.2.9519653
 - **Rust:** 1.75+ with Android targets:
   ```bash
@@ -128,9 +128,8 @@ adb logcat -s RezvanMesh
 
 1. **Onboarding Flow:**
    - Welcome screen explains offline mesh capability
-   - Tap "Create Identity" → generates Ed25519 keypair from MAC-derived seed
-   - System displays 12-word BIP39 mnemonic (user writes it down)
-   - Confirm phrase, set optional nickname
+   - Tap "Create Identity" → app generates a 32-byte `SecureRandom` seed and derives an Ed25519/X25519 keypair from it
+   - Seed is saved to Keystore-backed encrypted storage (no mnemonic/backup phrase is shown — there is currently no way to recover an identity if the app's storage is lost; see Known Issues)
    - Land in Status screen (scanning for neighbors)
 
 2. **Verify Installation:**
@@ -218,22 +217,24 @@ Link_Quality = RSSI → Quality mapping:
 
 **Identity Generation:**
 ```rust
-Seed = HKDF(MAC_address, salt="rezvan", 32 bytes)
-Public_Ed25519 = crypto_sign_ed25519_seed_keypair(seed)
-Public_X25519 = crypto_scalarmult_curve25519_base(seed)
+Seed = SecureRandom(32 bytes)   // generated on-device in Kotlin, NOT derived from
+                                 // any hardware identifier (MAC address, etc.)
+Public_Ed25519 = crypto_sign_ed25519_seed_keypair(seed)          // raw seed, libsodium's own API
+Private_X25519 = clamp(HKDF-SHA256(seed, info="rezvan-x25519-identity-v1"))  // domain-separated, not the raw seed
+Public_X25519  = crypto_scalarmult_curve25519_base(Private_X25519)
 Node_ID = SHA-256(Public_Ed25519)[0:8]
 ```
+The seed itself is stored only inside Android Keystore-backed `EncryptedSharedPreferences` (see `IdentityBackupHelper.kt`); there is no plaintext fallback path.
 
 **Unicast (Point-to-Point):**
-- X3DH key exchange with signed prekeys + one-time prekeys
-- Double Ratchet: Root Key → Chain Keys → Message Keys
-- Per-message AEAD: XChaCha20-Poly1305 (32-byte nonce, 16-byte tag)
-- Forward secrecy: old chain keys deleted after use
+- Session/ratchet state is handled by [`vodozemac`](https://github.com/matrix-org/vodozemac) (audited Rust Olm/Megolm implementation), not a hand-rolled Double Ratchet
+- X3DH-style key exchange with signed prekeys + one-time prekeys, Double Ratchet forward secrecy (Root Key → Chain Keys → Message Keys) — all inside `vodozemac`
+- Per-message AEAD as implemented by `vodozemac`'s Olm message format
 
-**Group/Broadcast:**
-- Sender key: 32-byte shared symmetric key per channel
-- AES-256-GCM or XChaCha20-Poly1305 with random nonce
-- Rotate on membership change
+**Group/Broadcast (sender keys):**
+- Shared 32-byte symmetric key per channel, encrypted with XChaCha20-Poly1305 (24-byte nonce)
+- Each message is additionally signed with the sender's own Ed25519 mesh identity key, so receivers can verify *which* member actually sent it (not just that some channel member did) — see `rezvan-crypto/src/sender_key.rs`
+- **Not yet wired to any transport** — channels currently have no send/receive path; this module exists and is tested but isn't called from production code yet
 
 ### Power Management
 
@@ -283,14 +284,15 @@ Offset │ Size │ Field              │ Value
 | **Replay** | Reuse old messages | Sequence numbers, timestamps in OGMs |
 | **Jamming** | Disrupt BLE/WiFi | Frequency hopping (channels 37/38/39), adaptive scan |
 | **Device Seizure** | Physical compromise | SQLCipher at rest (key in Android Keystore), PIN/password protection |
-| **Identity Loss** | Lost device | 12-word BIP39 mnemonic recovery (manual process) |
+| **Identity Loss** | Lost/wiped device | **Unmitigated today** — no backup/recovery mechanism exists; losing the device or clearing app data permanently loses the identity |
 
 ### No Backdoors
 
 - ✅ All code open-source (AGPL v3)
-- ✅ Cryptography via audited libsodium, not custom implementations
+- ✅ Cryptography via libsodium (through the `sodiumoxide` Rust binding) and `vodozemac` (audited Olm/Megolm), not custom crypto primitives
+- ⚠️ `sodiumoxide` itself is an unmaintained Rust crate; a scoped migration plan to `libsodium-sys-stable` exists (`rust/SODIUMOXIDE_MIGRATION.md`) but has not been applied
 - ✅ No telemetry, analytics, or crash reporting to external services
-- ✅ No phoning home, no implicit network calls
+- ✅ No phoning home, no implicit network calls in application code (note: `INTERNET` is currently declared in `AndroidManifest.xml`; no corresponding network call was found in the Kotlin source — origin/purpose not yet confirmed)
 - ✅ Zero embedded accounts, no hardcoded keys
 
 ---
@@ -328,6 +330,7 @@ RezvanMesh/
 │   └── build.gradle.kts
 ├── rust/
 │   ├── Cargo.toml                    # Workspace
+│   ├── SODIUMOXIDE_MIGRATION.md      # scoped, not-yet-applied dependency migration plan
 │   ├── rezvan-common/
 │   │   ├── Cargo.toml
 │   │   └── src/lib.rs
@@ -336,15 +339,27 @@ RezvanMesh/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── identity.rs
-│   │       ├── x3dh.rs
-│   │       └── ratchet.rs
+│   │       ├── sign.rs
+│   │       ├── sender_key.rs         # group/channel encryption (not yet wired to transport)
+│   │       ├── hkdf.rs
+│   │       ├── beacon_mac.rs
+│   │       └── epoch_key.rs          # network-wide beacon authentication
 │   └── rezvan-core/
 │       ├── Cargo.toml
 │       └── src/
 │           ├── lib.rs                # JNI entry points
 │           ├── engine.rs
 │           ├── routing.rs
+│           ├── session.rs            # vodozemac-backed 1:1 session management
+│           ├── action.rs
+│           ├── crypto.rs
 │           └── power.rs
+├── integration-tests/
+│   ├── mesh_simulator.py
+│   └── test_cases/
+│       ├── test_2node_message.py
+│       ├── test_5node_routing.py
+│       └── test_emergency_broadcast.py
 ├── scripts/
 │   ├── build_rust.sh
 │   ├── verify_interfaces.py
@@ -353,6 +368,8 @@ RezvanMesh/
 │   └── ci.yml
 └── README.md
 ```
+
+Note: no `Cargo.lock` is currently committed to the repository, so exact dependency versions (including `vodozemac` and `sodiumoxide`) are not pinned across builds.
 
 ### Build Pipeline
 
@@ -370,34 +387,45 @@ python3 scripts/verify_interfaces.py
 # 4. Install on device
 adb install -r app-debug.apk
 
-# 5. Run integration tests (manual 2-device test)
+# 5a. Run automated integration tests (simulator-based, no physical devices)
+python3 scripts/run_integration_test.py
+# or individually:
+python3 integration-tests/test_cases/test_2node_message.py
+python3 integration-tests/test_cases/test_5node_routing.py
+python3 integration-tests/test_cases/test_emergency_broadcast.py
+
+# 5b. For on-device verification, tail the log instead:
 adb logcat -s RezvanMesh | grep -E "GATT|MESSAGE|ROUTE"
 ```
 
-**CI/CD (GitHub Actions):**
+**CI/CD (GitHub Actions):** see `.github/workflows/ci.yml`
 ```yaml
-# Trigger: push to main, PR
-# Jobs:
-#   1. build-rust (cargo test, cargo build)
-#   2. interface-check (Python signature verification)
-#   3. build-apk (Gradle assembleDebug/assembleRelease)
-#   4. deliver-to-bale (optional, send APK to Bale Messenger bot)
+# Trigger: push to main, PR, manual dispatch
+# Single job ("build"), steps run in order:
+#   1. cargo test -p rezvan-crypto           (rezvan-core / rezvan-common tests are NOT run in CI)
+#   2. cargo ndk build --release -p rezvan-core   (cross-compile for arm64-v8a + armeabi-v7a)
+#   3. ./gradlew assembleDebug
+#   4. upload the debug APK as a workflow artifact
+#
+# Not currently present in CI: scripts/verify_interfaces.py, cargo clippy,
+# cargo audit/deny, release signing, or delivery to any messaging bot.
 ```
 
 ### Testing Strategy
 
 **Unit Tests (Rust):**
 ```bash
-cargo test -p rezvan-core
-cargo test -p rezvan-crypto
+cargo test -p rezvan-core      # available locally; NOT currently run in CI
+cargo test -p rezvan-crypto    # run in CI on every push/PR
 ```
 
-**Integration Tests (Manual, pending automation):**
-- [ ] 2-device message delivery (GATT)
-- [ ] 3-device multi-hop routing (A→B→C)
-- [ ] Voice broadcast playback
-- [ ] Power state transitions with battery simulation
-- [ ] Emergency broadcast flooding
+**Integration Tests (automated, simulator-based — see `integration-tests/`):**
+- [x] `test_2node_message.py` – 2-node message delivery, exercised via `mesh_simulator.py`
+- [x] `test_5node_routing.py` – multi-hop routing across 5 simulated nodes
+- [x] `test_emergency_broadcast.py` – SOS/emergency flooding behavior
+- [ ] Real 2-device GATT delivery (physical hardware) — still pending, see Known Issues
+- [ ] Voice broadcast playback on a real receiver — still pending, see Known Issues
+- [ ] Power state transitions with real battery simulation on-device
 
 **Diagnostics:**
 - Real-time Status screen (mesh state, radio stats)
@@ -415,6 +443,9 @@ cargo test -p rezvan-crypto
 | GATT message delivery (2 devices) | HIGH | Under test | This week |
 | Voice playback on receiver | HIGH | Implementation pending | This week |
 | 3+ device mesh stability | MEDIUM | Validation pending | This week |
+| No identity backup/recovery | HIGH | Not implemented — no mnemonic, no export path exists | Unscheduled |
+| No `Cargo.lock` committed | MEDIUM | Dependency versions (incl. `vodozemac`, `sodiumoxide`) are not pinned across builds | Unscheduled |
+| `sodiumoxide` dependency unmaintained upstream | LOW-MEDIUM | Migration plan documented in `rust/SODIUMOXIDE_MIGRATION.md`, not yet applied | Unscheduled |
 
 ### Deferred to v1.1
 
@@ -510,11 +541,11 @@ jarsigner -verify -verbose rezvan.apk
 
 ## Documentation
 
-- **Manifest.txt** – Full technical specification (31 KB)
-- **Handover_paper.txt** – Module contracts, JNI boundaries, integration plan
-- **Team_*.txt** – Detailed work packages for each module
-- **Appendix_*.txt** – Downstream issues, sodiumoxide API notes, debug observations
-- **Debug_Appendix.html** – Development environment constraints, debug phases
+As of this writing, the following are the actual documentation files present in the repository (the previous list here referenced files — `Manifest.txt`, `Handover_paper.txt`, `Team_*.txt`, `Appendix_*.txt`, `Debug_Appendix.html` — that do not exist in this repo and have been removed from this section):
+
+- **README.md** – This file
+- **rust/SODIUMOXIDE_MIGRATION.md** – Scoped plan for replacing the unmaintained `sodiumoxide` dependency (not yet applied)
+- Inline module-level doc comments in `rust/rezvan-crypto/src/*.rs` — several modules (`sender_key.rs`, `epoch_key.rs`, `identity.rs`) document specific security-audit findings and fixes directly above the relevant code
 
 ---
 
