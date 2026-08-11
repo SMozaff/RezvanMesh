@@ -11,8 +11,111 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Test crypto & build debug APK
+  # ---------------------------------------------------------------------
+  # Rust: format, lint, and test ALL THREE crates (rezvan-common,
+  # rezvan-crypto, rezvan-core) on the host target. Previously this job
+  # only ran `cargo test -p rezvan-crypto` -- rezvan-core (routing, relay,
+  # power state, session management) and rezvan-common (wire format) had
+  # zero CI coverage despite carrying the bulk of the engine's logic and
+  # its unit tests. Runs first and fast; the Android build job below
+  # depends on this passing before spending time cross-compiling.
+  # ---------------------------------------------------------------------
+  rust-test:
+    name: Rust — fmt, clippy, test (all crates)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --all -- --check
+        # Non-blocking for now: the codebase predates a fmt pass and hasn't
+        # been normalized yet. Flip this to a hard failure once it has.
+        continue-on-error: true
+
+      - name: Clippy (all crates, all targets)
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        # Non-blocking for now: there is a pre-existing set of style-only
+        # clippy warnings (see the PR/commit that introduced this workflow
+        # for the baseline count). Once that baseline is cleaned up, remove
+        # continue-on-error so new warnings fail CI.
+        continue-on-error: true
+
+      - name: Verify Cargo.lock is up to date
+        working-directory: rust
+        run: cargo update --workspace --locked
+        # Hard failure (no continue-on-error): if this fails, someone
+        # changed a Cargo.toml dependency without regenerating Cargo.lock
+        # (`cargo generate-lockfile` or `cargo update`) and committing it.
+        # An out-of-date lockfile silently defeats the reproducible-build
+        # guarantee a committed Cargo.lock exists to provide.
+
+      - name: Test rezvan-common (wire format)
+        working-directory: rust
+        run: cargo test -p rezvan-common --locked
+
+      - name: Test rezvan-crypto (cryptographic primitives)
+        working-directory: rust
+        run: cargo test -p rezvan-crypto --locked
+
+      - name: Test rezvan-core (routing, relay, sessions, power state)
+        working-directory: rust
+        run: cargo test -p rezvan-core --locked
+
+  # ---------------------------------------------------------------------
+  # Dependency vulnerability / advisory scan. Separate from rust-test so a
+  # newly-disclosed advisory (which nobody here controls the timing of)
+  # doesn't block a same-day merge on its own -- surfaced as a visible,
+  # non-blocking report instead. rust/SODIUMOXIDE_MIGRATION.md already
+  # documents that `sodiumoxide` is unmaintained upstream; this job is what
+  # would actually notice if that unmaintained status turns into a real
+  # advisory (RUSTSEC-*) rather than relying on someone remembering to
+  # check manually.
+  # ---------------------------------------------------------------------
+  rust-audit:
+    name: Rust — dependency advisory scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        working-directory: rust
+        run: cargo audit
+        continue-on-error: true # advisory-only for now; see job docs above
+
+  # ---------------------------------------------------------------------
+  # Android: cross-compile the Rust core for Android targets, then build
+  # the debug APK. Depends on rust-test passing first -- no point spending
+  # NDK cross-compile + Gradle time on a change that already fails its
+  # host-target unit tests.
+  # ---------------------------------------------------------------------
+  android-build:
+    name: Android — build debug APK
+    needs: rust-test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -29,12 +132,18 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
+      - name: Cache cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-android-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-android-
 
-      - name: Crypto host tests
-        working-directory: rust
-        run: cargo test -p rezvan-crypto
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -51,21 +160,44 @@ jobs:
       - name: Locate Android NDK
         id: ndk
         run: |
-          NDK_PATH=$(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | sort -V | tail -1)
+          NDK_PATH=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$NDK_PATH" ]; then
+            echo "::error::No Android NDK found under \$ANDROID_HOME/ndk. Check the runner's installed NDK versions."
+            exit 1
+          fi
           echo "Found NDK at: $NDK_PATH"
-          echo "ndk_path=$NDK_PATH" >> $GITHUB_OUTPUT
+          echo "ndk_path=$NDK_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Build Rust core for Android
         working-directory: rust
         run: |
           export ANDROID_NDK_HOME="${{ steps.ndk.outputs.ndk_path }}"
-          cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release -p rezvan-core
+          cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release --locked -p rezvan-core
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: RezvanMesh-debug
-          path: android/app/build/outputs/apk/debug/RezvanMesh-debug.apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Integration tests (integration-tests/) are NOT included as a CI job.
+  # Despite the "mesh_simulator" name, `get_connected_devices()` in
+  # mesh_simulator.py shells out to `adb devices` and every test case
+  # drives real ADB-attached hardware/emulators (install APK, launch
+  # activity, read logcat) -- they are not a pure-software protocol
+  # simulator that could run on a bare `ubuntu-latest` runner. Running them
+  # in CI would require either self-hosted runners with physical devices,
+  # or Android emulators via KVM (e.g. reactivecircus/android-emulator-
+  # runner), which is a real infrastructure decision -- separate GitHub
+  # runner minutes cost, KVM availability, and flakiness profile -- not
+  # something to add silently. Left for a follow-up if/when that tradeoff
+  # is decided; for now these remain run-locally-only, same as before this
+  # workflow was rewritten (previous docs describing them as "manual,
+  # pending automation" undersold that they're already scripted -- just not
+  # CI-automatable without device infrastructure).
+  # ---------------------------------------------------------------------

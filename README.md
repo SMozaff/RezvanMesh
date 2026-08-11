@@ -21,7 +21,7 @@
 
 ### ✅ Implemented & Tested
 
-- **Mesh Routing** – BATMAN-Adv protocol over BLE advertisement + GATT unicast
+- **Mesh Routing** – BATMAN-Adv-style protocol over BLE advertisement (1-hop discovery) + GATT unicast. Multi-hop relay (packets forwarded through an intermediate node toward a destination that isn't a direct neighbor) is implemented and unit-tested (`rezvan-core`'s `engine::tests` relay tests) but not yet validated on real BLE hardware across 3+ physical devices — see Known Issues
 - **End-to-End Encryption** – Signal Protocol (X3DH + Double Ratchet) via libsodium
 - **Text Messaging** – Up to 10,000 characters per message
 - **Voice Broadcasting** – Opus codec @ 16 kbps, push-to-talk up to 60 seconds
@@ -37,7 +37,7 @@
 - **GATT Message Delivery** – End-to-end 2-device test pending
 - **Voice Playback on Receiver** – MediaPlayer integration incomplete
 - **3+ Device Mesh Stability** – Multi-hop routing validation needed
-- **WiFi Direct Transport** – Stubs only, deferred to v1.1
+- **WiFi Direct Transport** – Group formation, server socket, and client handling are implemented (see `RadioControllerImpl.kt`); not merely stubs. Known gap: no relay/forwarding over this transport yet, and peer discovery assumes BLE has already resolved the group-owner's address.
 
 ---
 
@@ -234,7 +234,7 @@ The seed itself is stored only inside Android Keystore-backed `EncryptedSharedPr
 **Group/Broadcast (sender keys):**
 - Shared 32-byte symmetric key per channel, encrypted with XChaCha20-Poly1305 (24-byte nonce)
 - Each message is additionally signed with the sender's own Ed25519 mesh identity key, so receivers can verify *which* member actually sent it (not just that some channel member did) — see `rezvan-crypto/src/sender_key.rs`
-- **Not yet wired to any transport** — channels currently have no send/receive path; this module exists and is tested but isn't called from production code yet
+- **Wired to transport**: `MeshEngine::send_channel_message`/packet type 0x06 dispatches this over the same relay-capable path as other broadcast types (see `MeshEngine::process_incoming`'s relay section) — channels have a working send/receive path, unit-tested end to end (`engine::tests::test_channel_message_round_trip` and related)
 
 ### Power Management
 
@@ -340,7 +340,9 @@ RezvanMesh/
 │   │       ├── lib.rs
 │   │       ├── identity.rs
 │   │       ├── sign.rs
-│   │       ├── sender_key.rs         # group/channel encryption (not yet wired to transport)
+│   │       ├── sender_key.rs         # group/channel encryption; wired to transport via
+│   │       │                         # MeshEngine::send_channel_message (packet type 0x06),
+│   │       │                         # now relay-capable (see routing.rs / engine.rs relay docs)
 │   │       ├── hkdf.rs
 │   │       ├── beacon_mac.rs
 │   │       └── epoch_key.rs          # network-wide beacon authentication
@@ -387,41 +389,57 @@ python3 scripts/verify_interfaces.py
 # 4. Install on device
 adb install -r app-debug.apk
 
-# 5a. Run automated integration tests (simulator-based, no physical devices)
+# 5. Run integration tests (requires 2+ ADB-attached devices or emulators --
+#    despite the "simulator" naming, mesh_simulator.py drives real hardware
+#    via `adb devices`/install/logcat, it does not simulate the protocol in
+#    pure software; NOT currently run in CI for that reason)
 python3 scripts/run_integration_test.py
 # or individually:
 python3 integration-tests/test_cases/test_2node_message.py
 python3 integration-tests/test_cases/test_5node_routing.py
 python3 integration-tests/test_cases/test_emergency_broadcast.py
 
-# 5b. For on-device verification, tail the log instead:
+# 6. For on-device log verification instead/in addition:
 adb logcat -s RezvanMesh | grep -E "GATT|MESSAGE|ROUTE"
 ```
 
 **CI/CD (GitHub Actions):** see `.github/workflows/ci.yml`
 ```yaml
 # Trigger: push to main, PR, manual dispatch
-# Single job ("build"), steps run in order:
-#   1. cargo test -p rezvan-crypto           (rezvan-core / rezvan-common tests are NOT run in CI)
-#   2. cargo ndk build --release -p rezvan-core   (cross-compile for arm64-v8a + armeabi-v7a)
-#   3. ./gradlew assembleDebug
-#   4. upload the debug APK as a workflow artifact
+# Four independent jobs:
+#   1. rust-test    — cargo fmt --check (non-blocking), cargo clippy (non-blocking),
+#                      Cargo.lock freshness check (blocking), then
+#                      cargo test for rezvan-common, rezvan-crypto, AND rezvan-core
+#   2. rust-audit    — cargo audit against the RustSec advisory database (non-blocking;
+#                       relevant given sodiumoxide's unmaintained status, see
+#                       rust/SODIUMOXIDE_MIGRATION.md)
+#   3. android-build — depends on rust-test passing; cross-compiles the Rust core
+#                       (arm64-v8a + armeabi-v7a) via cargo-ndk, then ./gradlew assembleDebug,
+#                       then uploads the debug APK as a workflow artifact
+#   (integration-tests/ is intentionally NOT a CI job -- it drives real
+#   ADB-attached devices/emulators, not a pure-software simulator; see the
+#   comment block in ci.yml for the infrastructure tradeoff that would be
+#   needed to change that)
 #
-# Not currently present in CI: scripts/verify_interfaces.py, cargo clippy,
-# cargo audit/deny, release signing, or delivery to any messaging bot.
+# Not currently present in CI: scripts/verify_interfaces.py, release signing,
+# or delivery to any messaging bot. fmt and clippy are non-blocking
+# (continue-on-error) until the pre-existing warning/formatting baseline is
+# cleaned up -- see the inline comments in ci.yml for exactly why each step
+# is or isn't blocking.
 ```
 
 ### Testing Strategy
 
 **Unit Tests (Rust):**
 ```bash
-cargo test -p rezvan-core      # available locally; NOT currently run in CI
-cargo test -p rezvan-crypto    # run in CI on every push/PR
+cargo test -p rezvan-common    # wire format; run in CI on every push/PR
+cargo test -p rezvan-crypto    # cryptographic primitives; run in CI on every push/PR
+cargo test -p rezvan-core      # routing, relay, sessions, power state; run in CI on every push/PR
 ```
 
-**Integration Tests (automated, simulator-based — see `integration-tests/`):**
-- [x] `test_2node_message.py` – 2-node message delivery, exercised via `mesh_simulator.py`
-- [x] `test_5node_routing.py` – multi-hop routing across 5 simulated nodes
+**Integration Tests (see `integration-tests/`) — require 2+ ADB-attached devices or emulators, NOT run in CI:**
+- [x] `test_2node_message.py` – 2-node message delivery, via `mesh_simulator.py` driving real/emulated hardware over ADB
+- [x] `test_5node_routing.py` – multi-hop routing across 5 real/emulated nodes
 - [x] `test_emergency_broadcast.py` – SOS/emergency flooding behavior
 - [ ] Real 2-device GATT delivery (physical hardware) — still pending, see Known Issues
 - [ ] Voice broadcast playback on a real receiver — still pending, see Known Issues
@@ -444,13 +462,13 @@ cargo test -p rezvan-crypto    # run in CI on every push/PR
 | Voice playback on receiver | HIGH | Implementation pending | This week |
 | 3+ device mesh stability | MEDIUM | Validation pending | This week |
 | No identity backup/recovery | HIGH | Not implemented — no mnemonic, no export path exists | Unscheduled |
-| No `Cargo.lock` committed | MEDIUM | Dependency versions (incl. `vodozemac`, `sodiumoxide`) are not pinned across builds | Unscheduled |
-| `sodiumoxide` dependency unmaintained upstream | LOW-MEDIUM | Migration plan documented in `rust/SODIUMOXIDE_MIGRATION.md`, not yet applied | Unscheduled |
+| ~~No `Cargo.lock` committed~~ | ~~MEDIUM~~ | **Fixed**: `Cargo.lock` is now committed and CI's `rust-test` job fails the build if it's out of date relative to `Cargo.toml` | Done |
+| `sodiumoxide` dependency unmaintained upstream | LOW-MEDIUM | Migration plan documented in `rust/SODIUMOXIDE_MIGRATION.md`, not yet applied. CI's `rust-audit` job now runs `cargo audit` on every push/PR (non-blocking) so a real advisory against it would actually surface instead of relying on someone checking manually | Unscheduled (monitored) |
 
 ### Deferred to v1.1
 
-- **WiFi Direct Transport** – Stubs only; low priority for initial release
-- **Channel/Group Messaging** – UI/DB scaffolding exists, routing logic works, not yet wired
+- **WiFi Direct Transport (relay-capable)** – Basic transport (group formation, server socket, client send/receive) is implemented; relaying mesh packets over this transport (vs. BLE) is not, and is the actual remaining gap for v1.1
+- **Channel/Group Messaging** – Wired end-to-end: UI/DB scaffolding, sender-key encryption, and transport dispatch (packet type 0x06, relay-capable) all work; see `MeshEngine::send_channel_message`
 - **File Transfer** – Design exists, not implemented
 - **Satellite Mode (LoRa)** – Out of scope; BLE-only for now
 

@@ -1,5 +1,5 @@
 use rezvan_common::{AdvBeaconExt, NeighborInfo, NodeId, OGMPayload, MeshPacketHeader};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
 // Routing Table
@@ -36,6 +36,28 @@ pub struct RoutingTable {
     /// audit finding #9: this function existed but was never called and had
     /// no data to purge with).
     current_tick: u64,
+    /// Set of (originator, sequence) pairs this node has already relayed or
+    /// re-flooded, used by `seen_and_record` to prevent relay loops for
+    /// 0x02/0x03/0x06 packets (see `MeshEngine::process_incoming`'s relay
+    /// section). Deliberately separate from `last_seen_seq`: that field
+    /// gates REPLAY (a sequence must be strictly greater than the last one
+    /// seen from that originator, for beacons/OGMs which are periodic and
+    /// monotonically increasing), whereas relay dedup needs to catch an
+    /// EXACT (originator, sequence) pair seen before regardless of
+    /// ordering -- a flooded broadcast can legitimately arrive out of order
+    /// from multiple neighbours, and rejecting anything "not strictly
+    /// newer" would incorrectly drop a legitimate second copy of the same
+    /// broadcast arriving via a different, slower path before drop-worthy
+    /// duplication has even been established.
+    ///
+    /// Bounded the same way as `last_seen_seq`/`replay_last_seen_tick`: per
+    /// originator, evicted via `relayed_seen_last_tick` after
+    /// `REPLAY_RETENTION_MULTIPLIER * max_age_ticks` of silence from that
+    /// originator, so this doesn't grow unboundedly over a long session.
+    relayed_seen: HashMap<NodeId, HashSet<u32>>,
+    /// Tick at which `relayed_seen` was last touched for a given
+    /// originator; same eviction role as `replay_last_seen_tick`.
+    relayed_seen_last_tick: HashMap<NodeId, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +82,8 @@ impl RoutingTable {
             last_seen_seq: HashMap::new(),
             replay_last_seen_tick: HashMap::new(),
             current_tick: 0,
+            relayed_seen: HashMap::new(),
+            relayed_seen_last_tick: HashMap::new(),
         }
     }
 
@@ -75,6 +99,19 @@ impl RoutingTable {
     /// Advance the logical clock. Call once per `MeshEngine::tick()`.
     pub fn advance_tick(&mut self) {
         self.current_tick = self.current_tick.wrapping_add(1);
+    }
+
+    /// Records that `(originator, sequence)` has been seen for relay
+    /// purposes, returning `true` if it was ALREADY recorded (i.e. this is
+    /// a duplicate that should be dropped rather than relayed again) or
+    /// `false` if this is the first time (i.e. safe to relay/re-flood).
+    /// See the `relayed_seen` field docs for why this is intentionally
+    /// separate from the replay-rejection tracking used by
+    /// `process_beacon`/`process_ogm`.
+    pub fn seen_and_record(&mut self, originator: NodeId, sequence: u32) -> bool {
+        self.relayed_seen_last_tick.insert(originator, self.current_tick);
+        let set = self.relayed_seen.entry(originator).or_default();
+        !set.insert(sequence)
     }
 
     // -----------------------------------------------------------------------
@@ -146,13 +183,29 @@ impl RoutingTable {
         let entries = self.routes.entry(beacon.originator).or_default();
 
         if let Some(existing) = entries.iter_mut().find(|e| e.next_hop == beacon.originator) {
+            // Bug fix: this branch used to return `true` only when the
+            // metric strictly improved, and `false` otherwise -- even
+            // though `last_seen_tick` (line above) was unconditionally
+            // refreshed either way. That meant a perfectly healthy, stable
+            // link (same RSSI/battery beacon after beacon) was reported to
+            // the caller as "nothing changed," even though the *liveness*
+            // of this route absolutely did change: it's the only thing
+            // standing between this route and eviction by `purge_stale`.
+            // Caught by `test_process_beacon_replay_rejected`, which
+            // expects a validly-sequenced beacon from an already-known peer
+            // to be reported as accepted/processed regardless of whether
+            // its metric happens to tie the existing one.
+            //
+            // A beacon that reaches this point has already passed replay
+            // rejection, verification, and the weak-link cutoff (`lq == 0`
+            // returns early above) -- it is real, current information about
+            // this route, so it is always routing-table-relevant.
             existing.last_seen_tick = self.current_tick;
             if new_metric < existing.metric {
                 existing.metric = new_metric;
                 existing.link_quality = lq;
-                return true;
             }
-            return false;
+            return true;
         }
 
         entries.push(RouteEntry {
@@ -181,6 +234,18 @@ impl RoutingTable {
         self.routes.get(dest).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
+    /// Test-only: directly mutate the routes known for `dest`. Production
+    /// code must never call this -- routes are populated exclusively
+    /// through `process_beacon`/`process_ogm`, which enforce replay
+    /// rejection, verification, and link-quality gating that this bypasses
+    /// entirely. Exists so `engine.rs`'s relay tests can seed a multi-hop
+    /// route (`next_hop != dest`) without needing to construct a full,
+    /// signed OGM packet just to set up test fixtures.
+    #[cfg(test)]
+    pub fn test_only_set_routes(&mut self, dest: NodeId, entries: Vec<RouteEntry>) {
+        self.routes.insert(dest, entries);
+    }
+
     /// Return a list of all known destinations.
     pub fn destinations(&self) -> Vec<NodeId> {
         self.routes.keys().cloned().collect()
@@ -190,18 +255,26 @@ impl RoutingTable {
     // Multi-hop OGM construction (MeshPacketHeader-based)
     // -----------------------------------------------------------------------
     //
-    // NOTE: as of this fix, nothing in engine.rs calls build_ogm/process_ogm
-    // below -- the live 1-hop discovery path is exclusively AdvBeaconExt via
-    // process_beacon() above. These MeshPacketHeader-based OGM functions are
-    // kept for a future multi-hop-over-GATT relay feature (see README's
-    // "not yet wired" section) and are exercised only by the tests in this
-    // file. If that feature lands, its OGMs must be signed the same way
-    // KeyAnnouncement/broadcast/handshake packets are (see engine.rs) --
-    // do NOT wire this up unsigned.
+    // UPDATE: multi-hop relay landed alongside the version-0x03 wire format
+    // (`MeshPacketHeader::destination`). `build_ogm` is now called
+    // periodically from `MeshEngine::tick()`, and `process_ogm` is called
+    // from `MeshEngine::process_incoming` for received 0x01 packets -- both
+    // signed the same way KeyAnnouncement/broadcast/handshake packets are,
+    // per the note this comment used to warn about. See
+    // `MeshEngine::process_incoming`'s "Relay" section for how 0x02/0x03/0x06
+    // packets are forwarded toward a destination that isn't a direct
+    // neighbour, using this table's routes.
 
     /// Build an OGM packet that reflects our current view of the network.
     /// Signature is appended externally by the engine (Ed25519, 64 bytes).
-    pub fn build_ogm(&self, sequence: u32, timestamp: u64) -> Vec<u8> {
+    /// `timestamp` in the payload is `self.current_tick` (this table's
+    /// existing ticks-as-time proxy, advanced once per `MeshEngine::tick()`)
+    /// rather than a caller-supplied wall-clock value -- there is no
+    /// wall-clock time available at this layer, same reasoning as
+    /// `RouteEntry::last_seen_tick` and `purge_stale`'s docs. Consumers of
+    /// this OGM's timestamp field must treat it the same way: relative
+    /// ticks, not epoch time.
+    pub fn build_ogm(&self, sequence: u32) -> Vec<u8> {
         let mut neighbors = [NeighborInfo::default(); 9];
         let mut count = 0u8;
 
@@ -221,7 +294,7 @@ impl RoutingTable {
         }
 
         let ogm = OGMPayload {
-            timestamp,
+            timestamp: self.current_tick,
             link_quality: 0,
             path_metric: 0,
             neighbor_count: count,
@@ -234,6 +307,7 @@ impl RoutingTable {
             packet_type: 0x01,
             ttl: 10,
             originator: self.node_id,
+            destination: rezvan_common::BROADCAST_DESTINATION,
             sequence,
             hop_count: 0,
             next_hop: [0u8; 8],
@@ -291,13 +365,16 @@ impl RoutingTable {
         let entries = self.routes.entry(header.originator).or_default();
 
         if let Some(existing) = entries.iter_mut().find(|e| e.next_hop == header.next_hop) {
+            // Same fix as process_beacon's equivalent branch: liveness
+            // refresh (line above) is always routing-table-relevant, not
+            // just a metric improvement -- see that function's comment for
+            // the full reasoning.
             existing.last_seen_tick = self.current_tick;
             if new_metric < existing.metric {
                 existing.metric = new_metric;
                 existing.link_quality = lq;
-                return true;
             }
-            return false;
+            return true;
         }
 
         entries.push(RouteEntry {
@@ -357,6 +434,23 @@ impl RoutingTable {
                 .unwrap_or(false)
         });
         self.replay_last_seen_tick
+            .retain(|_, &mut t| now.saturating_sub(t) <= replay_max_age);
+
+        // Same bounded-eviction pattern as replay tracking above, applied to
+        // relay-loop-dedup tracking (`seen_and_record`). Once an originator
+        // has been silent for `replay_max_age` ticks, forget which of their
+        // sequence numbers we've relayed -- if they resurface after that
+        // long, treating their next packet as "not yet relayed" is correct
+        // (they're being freshly rediscovered), same reasoning as
+        // `last_seen_seq`'s eviction above.
+        let relayed_seen_last_tick = &self.relayed_seen_last_tick;
+        self.relayed_seen.retain(|node, _| {
+            relayed_seen_last_tick
+                .get(node)
+                .map(|&t| now.saturating_sub(t) <= replay_max_age)
+                .unwrap_or(false)
+        });
+        self.relayed_seen_last_tick
             .retain(|_, &mut t| now.saturating_sub(t) <= replay_max_age);
     }
 }
@@ -418,6 +512,7 @@ mod tests {
             packet_type: 0x01,
             ttl: 10,
             originator,
+            destination: rezvan_common::BROADCAST_DESTINATION,
             sequence: seq,
             hop_count,
             next_hop: originator,
@@ -569,7 +664,7 @@ mod tests {
         let mut table = RoutingTable::new(dummy_node_id(0xAA));
         let pkt = dummy_ogm_packet(dummy_node_id(0xBB), 1, 200, 1);
         table.process_ogm(&pkt, -70);
-        let ogm = table.build_ogm(1, 12345678);
+        let ogm = table.build_ogm(1);
         assert!(ogm.len() > MeshPacketHeader::SIZE);
     }
 

@@ -21,13 +21,22 @@ pub fn compute_node_id(public_key: &[u8; 32]) -> NodeId {
 // authenticated by the Olm session's AEAD (see session.rs), and re-signing
 // on top of an already-authenticated ciphertext buys nothing.
 //
-// VERSION 0x02 (security audit finding #3 / Fix 3, bumped from 0x01): a
-// deliberate clean break, not a negotiated upgrade -- this is pre-1.0 beta,
-// so old and new builds are simply not wire-compatible. `process_incoming`
-// rejects any header where `version != CURRENT_VERSION` outright rather than
-// trying to interpret old-format fields.
-pub const MESH_PACKET_VERSION: u8 = 0x02;
+// VERSION 0x03 (relay/multi-hop support): bumped from 0x02. Adds an explicit
+// `destination` field to MeshPacketHeader (see below) so an intermediate
+// relay node can tell who a packet is ultimately FOR, distinct from
+// `originator` (who created it) and `next_hop` (who to physically forward it
+// to on this hop). Without this field, relay was architecturally impossible:
+// there was no way for a node that isn't the final recipient to know where
+// to forward a 0x02/0x03/0x06 packet. Pre-1.0 beta, so this is again a clean
+// break like the 0x01->0x02 bump, not a negotiated upgrade.
+pub const MESH_PACKET_VERSION: u8 = 0x03;
 pub const MESH_PACKET_SIGNATURE_LEN: usize = 64;
+
+/// Sentinel `destination`/`next_hop` value meaning "broadcast to the whole
+/// mesh" (used by 0x03 emergency broadcasts, 0x05 KeyAnnouncements, and 0x01
+/// OGMs -- all all-zero NodeId, matching the existing convention already
+/// used for `Action::SendBlePacket`'s broadcast target in action.rs).
+pub const BROADCAST_DESTINATION: NodeId = [0u8; 8];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeshPacketHeader {
@@ -35,6 +44,14 @@ pub struct MeshPacketHeader {
     pub packet_type: u8,
     pub ttl: u8,
     pub originator: NodeId,
+    /// Final intended recipient of this packet, distinct from `originator`
+    /// (who created it) and `next_hop` (who to forward it to on just this
+    /// hop). `BROADCAST_DESTINATION` (all-zero) means "everyone" -- used by
+    /// packet types that are inherently mesh-wide (0x01 OGM, 0x03 emergency
+    /// broadcast, 0x05 KeyAnnouncement). Added in version 0x03 to make
+    /// multi-hop relay possible at all: a relaying node needs to know who a
+    /// packet is ultimately for in order to decide where to forward it.
+    pub destination: NodeId,
     pub sequence: u32,
     pub hop_count: u8,
     pub next_hop: NodeId,
@@ -42,7 +59,7 @@ pub struct MeshPacketHeader {
 }
 
 impl MeshPacketHeader {
-    pub const SIZE: usize = 26;
+    pub const SIZE: usize = 34;
 
     pub fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::SIZE);
@@ -50,6 +67,7 @@ impl MeshPacketHeader {
         buf.push(self.packet_type);
         buf.push(self.ttl);
         buf.extend_from_slice(&self.originator);
+        buf.extend_from_slice(&self.destination);
         buf.extend_from_slice(&self.sequence.to_be_bytes());
         buf.push(self.hop_count);
         buf.extend_from_slice(&self.next_hop);
@@ -64,16 +82,18 @@ impl MeshPacketHeader {
         let ttl = data[2];
         let mut originator = [0u8; 8];
         originator.copy_from_slice(&data[3..11]);
-        let sequence = u32::from_be_bytes([data[11], data[12], data[13], data[14]]);
-        let hop_count = data[15];
+        let mut destination = [0u8; 8];
+        destination.copy_from_slice(&data[11..19]);
+        let sequence = u32::from_be_bytes([data[19], data[20], data[21], data[22]]);
+        let hop_count = data[23];
         let mut next_hop = [0u8; 8];
-        next_hop.copy_from_slice(&data[16..24]);
-        let payload_len = u16::from_be_bytes([data[24], data[25]]);
-        Some(Self { version, packet_type, ttl, originator, sequence, hop_count, next_hop, payload_len })
+        next_hop.copy_from_slice(&data[24..32]);
+        let payload_len = u16::from_be_bytes([data[32], data[33]]);
+        Some(Self { version, packet_type, ttl, originator, destination, sequence, hop_count, next_hop, payload_len })
     }
 }
 
-const _: () = assert!(MeshPacketHeader::SIZE == 26);
+const _: () = assert!(MeshPacketHeader::SIZE == 34);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OGMPayload {
@@ -327,7 +347,7 @@ mod tests {
     fn test_header_size_constant_matches_serialization() {
         let hdr = MeshPacketHeader {
             version: 1, packet_type: 1, ttl: 1,
-            originator: [0; 8], sequence: 0, hop_count: 0,
+            originator: [0; 8], destination: [0; 8], sequence: 0, hop_count: 0,
             next_hop: [0; 8], payload_len: 0,
         };
         assert_eq!(hdr.serialize().len(), MeshPacketHeader::SIZE);
@@ -337,6 +357,36 @@ mod tests {
     fn test_truncated_header_rejected() {
         let bytes = vec![0u8; MeshPacketHeader::SIZE - 1];
         assert!(MeshPacketHeader::deserialize(&bytes).is_none());
+    }
+
+    #[test]
+    fn test_header_destination_roundtrip() {
+        // Regression test for the version-0x03 relay support: `destination`
+        // must survive serialize/deserialize distinctly from `originator`
+        // and `next_hop` -- these three fields all matter for relay and must
+        // never be conflated.
+        let hdr = MeshPacketHeader {
+            version: MESH_PACKET_VERSION,
+            packet_type: 0x02,
+            ttl: 5,
+            originator: [1; 8],
+            destination: [2; 8],
+            sequence: 7,
+            hop_count: 1,
+            next_hop: [3; 8],
+            payload_len: 0,
+        };
+        let ser = hdr.serialize();
+        assert_eq!(ser.len(), MeshPacketHeader::SIZE);
+        let deser = MeshPacketHeader::deserialize(&ser).unwrap();
+        assert_eq!(hdr, deser);
+        assert_ne!(deser.destination, deser.originator);
+        assert_ne!(deser.destination, deser.next_hop);
+    }
+
+    #[test]
+    fn test_broadcast_destination_is_all_zero() {
+        assert_eq!(BROADCAST_DESTINATION, [0u8; 8]);
     }
 
     #[test]

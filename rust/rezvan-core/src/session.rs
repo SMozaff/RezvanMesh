@@ -11,12 +11,12 @@
 //! and are handed in via `register_peer_keys`. Our own bundle to advertise is
 //! produced by `key_bundle`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rezvan_common::NodeId;
 use rezvan_crypto::{CryptoProvider, IdentityKeypair};
 use vodozemac::olm::{Account, OlmMessage, Session, SessionConfig};
-use vodozemac::Curve25519PublicKey;
+use vodozemac::{Curve25519PublicKey, KeyId};
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -56,11 +56,30 @@ pub struct SessionManager {
     /// documented in sender_key.rs -- this only stores/retrieves whatever key
     /// the UI layer has already agreed on for a given channel.
     channel_keys: HashMap<u32, [u8; 32]>,
-    /// How many one-time keys from the current generated batch have already
-    /// been advertised via `key_bundle()`. See that function's docs (security
-    /// audit finding #9: one-time keys were previously advertised forever
-    /// without rotation).
-    otk_advertise_index: usize,
+    /// Set of one-time-key IDs from the current generated batch that have
+    /// already been advertised via `key_bundle()`.
+    ///
+    /// Bug fix (found while re-auditing security audit finding #9): the
+    /// original rotation scheme tracked a positional index
+    /// (`otk_advertise_index`) into `Account::one_time_keys()`, on the
+    /// assumption noted in this field's old doc comment that "iteration
+    /// order is stable across calls." It is NOT: vodozemac's
+    /// `one_time_keys()` returns a brand-new `HashMap<KeyId,
+    /// Curve25519PublicKey>` built fresh on every call (`.collect()` over
+    /// its internal store), and `HashMap` iteration order is not guaranteed
+    /// stable even across two calls over identical underlying data. In
+    /// practice this was verified to actually repeat keys within a single
+    /// 20-key batch (caught by
+    /// `test_key_bundle_rotates_through_full_batch_without_repeat`), which
+    /// defeats one-time-prekey forward secrecy exactly the way the original
+    /// finding #9 bug did -- just non-deterministically instead of always.
+    ///
+    /// Fixed by tracking actual advertised `KeyId`s (vodozemac's own stable,
+    /// generation-order identifier for each one-time key) in a set, and
+    /// picking any not-yet-advertised key each call. This is correct
+    /// regardless of `one_time_keys()`'s iteration order because membership
+    /// in the set is keyed by identity, not position.
+    otk_advertised: HashSet<KeyId>,
     /// Network-wide shared beacon-authentication key + its epoch number (see
     /// rezvan_crypto::epoch_key module docs for the full design rationale).
     /// `None` until either (a) this device bootstraps a brand-new mesh with
@@ -83,7 +102,7 @@ impl SessionManager {
             sessions: HashMap::new(),
             peer_keys: HashMap::new(),
             channel_keys: HashMap::new(),
-            otk_advertise_index: 0,
+            otk_advertised: HashSet::new(),
             epoch_key: None,
             epoch_number: 0,
         }
@@ -192,34 +211,28 @@ impl SessionManager {
     /// (security audit finding #3 / Fix 3) -- they were not previously
     /// exchanged at all.
     ///
-    /// One-time-key hygiene (security audit finding #9): the original version
-    /// of this function always returned `one_time_keys().values().next()`
-    /// and never called `mark_keys_as_published()`. With no server-side
-    /// consumption of these keys from our own account state, that meant the
-    /// exact same OTK was advertised in every KeyAnnouncement forever --
-    /// defeating the forward-secrecy purpose of a one-time prekey (if that
-    /// key is ever compromised, it compromises every session anyone ever
-    /// established using it, not just one).
+    /// One-time-key hygiene (security audit finding #9, later re-fixed): the
+    /// original version of this function always returned
+    /// `one_time_keys().values().next()` and never called
+    /// `mark_keys_as_published()`, so the exact same OTK was advertised in
+    /// every KeyAnnouncement forever -- defeating one-time-prekey forward
+    /// secrecy (if that key is ever compromised, it compromises every
+    /// session anyone ever established using it, not just one).
     ///
-    /// Fixed by rotating through the generated batch positionally
-    /// (`otk_advertise_index` counts how many of the current 20-key batch
-    /// we've handed out) instead of always taking the first key. Once the
-    /// whole batch has been advertised, mark it published (vodozemac drops
-    /// it from `one_time_keys()`) and generate a fresh batch. This avoids
-    /// both the original bug (same key forever) and the simpler alternative
-    /// of calling `mark_keys_as_published()` on every call, which would
-    /// discard the other 19 freshly-generated-but-unused keys each cycle for
-    /// no reason.
+    /// That was first fixed by rotating through the generated batch via a
+    /// positional index into `one_time_keys()`'s iteration order, on the
+    /// documented assumption that the order was stable across calls. It
+    /// was not: vodozemac's `one_time_keys()` returns a freshly-collected
+    /// `HashMap` on every call, whose iteration order is not guaranteed
+    /// stable even over unchanged underlying data, and this was verified in
+    /// practice to intermittently repeat a key within a single batch.
     ///
-    /// Caveat: this assumes `one_time_keys()`'s iteration order is stable
-    /// across calls between mutations (true for `HashMap`/`BTreeMap`-backed
-    /// stores in practice, since nothing here reorders or resizes the
-    /// collection between calls). It's "advertise each key in the batch
-    /// roughly once before rotating," not a cryptographically-enforced
-    /// exact-once guarantee -- if that stronger guarantee is ever needed,
-    /// switch to an explicit per-key advertised/unadvertised set once
-    /// vodozemac's key-ID API is confirmed (not done here to avoid guessing
-    /// at that API's exact shape without access to its docs).
+    /// Fixed for real by tracking already-advertised keys by their stable
+    /// `vodozemac::KeyId` (a monotonic generation-order identifier, not a
+    /// position) in `otk_advertised`. Once every key in the current batch
+    /// has been advertised at least once, the whole batch is marked
+    /// published and a fresh one is generated -- same rotation behavior as
+    /// before, just correct regardless of iteration order.
     /// Our bundle to advertise: Olm identity key (32) ++ Olm one-time key (32)
     /// ++ mesh X25519 identity key (32) ++ mesh Ed25519 identity key (32) ++
     /// beacon epoch number (4) ++ beacon epoch key (32) = 164 bytes total.
@@ -234,27 +247,48 @@ impl SessionManager {
     pub fn key_bundle(&mut self) -> Vec<u8> {
         if self.account.one_time_keys().is_empty() {
             self.account.generate_one_time_keys(20);
-            self.otk_advertise_index = 0;
+            self.otk_advertised.clear();
         }
 
         let olm_identity = *self.account.curve25519_key().as_bytes();
 
-        let batch_len = self.account.one_time_keys().len();
-        if self.otk_advertise_index >= batch_len {
+        let available = self.account.one_time_keys();
+        // Pick any key from the current batch we haven't advertised yet.
+        // Iteration order over `available` is NOT assumed stable (see
+        // `otk_advertised` field docs) -- correctness here comes from set
+        // membership by KeyId, not from position.
+        let mut unadvertised = available
+            .iter()
+            .find(|(id, _)| !self.otk_advertised.contains(id));
+
+        if unadvertised.is_none() {
             // Whole batch advertised at least once already -- rotate.
             self.account.mark_keys_as_published();
             self.account.generate_one_time_keys(20);
-            self.otk_advertise_index = 0;
+            self.otk_advertised.clear();
         }
 
-        let one_time = self
-            .account
-            .one_time_keys()
-            .values()
-            .nth(self.otk_advertise_index)
-            .map(|k| *k.as_bytes())
-            .unwrap_or([0u8; 32]);
-        self.otk_advertise_index += 1;
+        // Re-borrow after any rotation above (the previous `available` may
+        // now be stale / the account's key set has changed).
+        let available = self.account.one_time_keys();
+        if unadvertised.is_none() {
+            unadvertised = available.iter().next();
+        }
+
+        let (one_time_id, one_time_key) = match unadvertised {
+            Some((id, key)) => (*id, *key.as_bytes()),
+            // Only reachable if `generate_one_time_keys(20)` somehow produced
+            // zero keys, which vodozemac's own contract does not permit; we
+            // can't construct a placeholder `KeyId` (its inner field isn't
+            // public), so fail loudly instead of silently advertising an
+            // all-zero key, which would be a much worse failure mode.
+            None => panic!(
+                "vodozemac Account::generate_one_time_keys(20) produced no keys; \
+                 cannot advertise a key bundle"
+            ),
+        };
+        self.otk_advertised.insert(one_time_id);
+        let one_time = one_time_key;
 
         // Bootstrap our own epoch key if we've never had one from anyone --
         // every device that advertises a KeyAnnouncement must carry SOME

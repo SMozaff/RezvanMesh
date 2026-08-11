@@ -111,6 +111,34 @@ impl MeshEngine {
             });
         }
 
+        // Multi-hop OGM broadcast (packet type 0x01), so routes propagate
+        // beyond direct neighbours. Previously `build_ogm`/`process_ogm`
+        // existed and were exercised only by unit tests -- nothing in this
+        // function ever actually sent one, so no node's routing table ever
+        // reflected anything more than 1 hop away. Reuses `ogm_interval`
+        // (the SAME cadence as the lightweight AdvBeaconExt beacon above --
+        // `get_ogm_interval_secs`'s name finally matches what it gates here)
+        // rather than introducing a separate, independent timer: an OGM is
+        // materially larger (34-byte header + up to 50-byte payload + 64-byte
+        // signature vs. a 24-byte beacon) and this is the same power-state-
+        // aware cadence already tuned to trade discovery freshness for
+        // battery cost, so it's the natural budget to share rather than
+        // adding a second, uncoordinated source of periodic radio traffic.
+        if seq % ogm_interval == 0 {
+            self.ogm_sequence = self.ogm_sequence.wrapping_add(1);
+            let mut signed_bytes = self.routing.build_ogm(self.ogm_sequence);
+            let identity = self.sessions.identity();
+            // build_ogm() already returns [header][payload]; sign the whole
+            // thing the same way build_signed_packet does for other signed
+            // types, then append the signature.
+            let sig = self.crypto.sign(&identity, &signed_bytes);
+            signed_bytes.extend_from_slice(&sig);
+            actions.push(Action::SendBlePacket {
+                target: crate::action::BROADCAST_TARGET,
+                data: signed_bytes,
+            });
+        }
+
         actions
     }
 
@@ -123,7 +151,7 @@ impl MeshEngine {
         // ── (A) BLE advertisement beacon (AdvBeaconExt, 24 bytes) ───────────
         // These arrive on the beacon path (RadioControllerImpl feeds raw
         // manufacturer data here for type 0x01). Distinguish by length: a
-        // valid beacon is exactly 24 bytes; a MeshPacketHeader is ≥26.
+        // valid beacon is exactly 24 bytes; a MeshPacketHeader is ≥34.
         if raw_packet.len() == AdvBeaconExt::SIZE {
             if let Some(beacon) = AdvBeaconExt::deserialize(raw_packet) {
                 if beacon.packet_type == 0x01 {
@@ -133,7 +161,7 @@ impl MeshEngine {
             return (None, Vec::new());
         }
 
-        // ── (B) MeshPacketHeader-based GATT packet (≥26 bytes) ─────────────
+        // ── (B) MeshPacketHeader-based GATT packet (≥34 bytes) ─────────────
         let header = match MeshPacketHeader::deserialize(raw_packet) {
             Some(h) => h,
             None => {
@@ -149,7 +177,7 @@ impl MeshEngine {
             }
         };
 
-        // Version gate: pre-1.0 clean break -- reject anything not v0.2.
+        // Version gate: pre-1.0 clean break -- reject anything not v0.3.
         if header.version != MESH_PACKET_VERSION {
             return (None, vec![Action::DiagLog {
                 tag: "RUST".into(),
@@ -280,11 +308,145 @@ impl MeshEngine {
             }
         }
 
-        // ── Dispatch ────────────────────────────────────────────────────────
+        // ── Relay ─────────────────────────────────────────────────────────
+        // Added alongside the version-0x03 `destination` field. Two cases:
+        //
+        // (1) Unicast (0x02) not addressed to us: we are a pure intermediate
+        //     hop. Don't attempt to decrypt (wrong Olm session, would just
+        //     fail) -- forward it on toward the destination's next hop and
+        //     stop, we have nothing else to do with it.
+        //
+        // (2) Broadcast-scoped types (0x03 emergency, 0x06 channel message):
+        //     "for us" and "for everyone else too" are not mutually
+        //     exclusive -- process it locally via the normal dispatch below
+        //     AND re-flood it to other neighbours, so it keeps propagating
+        //     outward through the mesh. 0x01 (OGM), 0x04 (handshake), and
+        //     0x05 (KeyAnnouncement) are deliberately excluded: OGMs already
+        //     have their own periodic re-send cadence per node rather than
+        //     being flood-relayed hop-by-hop, and handshake/KeyAnnouncement
+        //     are neighbour-scoped by design.
+        //
+        // Loop prevention: `seen_and_record` rejects a packet this node has
+        // already relayed once before, keyed by (originator, sequence) --
+        // this is what actually prevents relay loops/duplicate re-floods,
+        // for ALL relay-candidate types. `ttl` is additionally a REAL,
+        // decrementing hop budget for 0x02 (direct message) specifically,
+        // since that type has no outer signature covering the header (Olm
+        // AEAD authenticates only the payload) and so `build_relay_action`
+        // can safely mutate ttl/hop_count in place. For 0x03/0x06 (which DO
+        // carry an outer Ed25519 signature over the whole header+payload),
+        // `ttl` is NOT decremented on relay -- mutating it would invalidate
+        // that signature for the next hop -- so for those two types `ttl`
+        // only reflects what the originator set, and `seen_and_record` is
+        // the sole loop-prevention mechanism. See `build_relay_action`'s
+        // docs for the full reasoning.
+        let is_relay_candidate = matches!(header.packet_type, 0x02 | 0x03 | 0x06);
+        if is_relay_candidate {
+            if self.routing.seen_and_record(header.originator, header.sequence) {
+                // Already relayed this exact (originator, sequence) before
+                // -- drop silently to prevent relay loops/duplicate floods.
+                return (None, Vec::new());
+            }
+
+            let addressed_to_us = header.destination == self.node_id;
+            let is_broadcast = header.destination == rezvan_common::BROADCAST_DESTINATION;
+
+            if header.ttl > 0 && (!addressed_to_us || is_broadcast) {
+                if let Some(action) = self.build_relay_action(&header, raw_packet) {
+                    let mut actions = vec![action];
+                    // Unicast not addressed to us: nothing local to do, stop here.
+                    if !addressed_to_us && !is_broadcast {
+                        return (None, actions);
+                    }
+                    // Broadcast: fall through to normal dispatch below for the
+                    // local-processing side, but keep the relay action too.
+                    let (msg, mut more_actions) = self.dispatch_packet(&header, raw_packet, payload_end, timestamp, rssi);
+                    actions.append(&mut more_actions);
+                    return (msg, actions);
+                }
+                // No route/neighbour to relay toward: if it's not for us
+                // either, there's nothing more we can do with it.
+                if !addressed_to_us {
+                    return (None, Vec::new());
+                }
+            } else if !addressed_to_us {
+                // TTL exhausted and not for us: drop.
+                return (None, Vec::new());
+            }
+        }
+
+        self.dispatch_packet(&header, raw_packet, payload_end, timestamp, rssi)
+    }
+
+    /// Build the `Action::SendBlePacket` that relays `raw_packet` one hop
+    /// further toward `header.destination`. Returns `None` if we have no
+    /// known route to relay through -- the caller treats that as "can't
+    /// relay, drop."
+    ///
+    /// TTL/hop_count handling differs by whether this packet type carries an
+    /// outer Ed25519 signature (see `needs_sig` above, and each type's wire
+    /// format docs in rezvan_common):
+    ///
+    ///   * 0x02 (direct message) has NO outer signature -- it's authenticated
+    ///     by its Olm AEAD payload only, which does not cover the header at
+    ///     all. So `ttl`/`hop_count` are safe to mutate in place: this gives
+    ///     0x02 relay a real, enforced hop budget.
+    ///
+    ///   * 0x03/0x06 (and, if ever wired for relay, 0x01/0x04/0x05) DO carry
+    ///     an outer signature whose `signed_bytes` is the entire header
+    ///     (including ttl/hop_count) plus payload. Mutating either field
+    ///     would invalidate that signature for the next hop's verification,
+    ///     and a relay has no way to re-sign as the original originator
+    ///     (routing-table bookkeeping and cryptographic identity are
+    ///     deliberately kept separate -- see RoutingTable's module docs).
+    ///     These types are therefore forwarded byte-for-byte unchanged, and
+    ///     rely entirely on `seen_and_record`'s per-(originator, sequence)
+    ///     tracking for loop prevention rather than a decrementing hop
+    ///     count. Acceptable for a small mesh; a broadcast type that needs a
+    ///     trustworthy, relay-mutable hop count would need a redesign (e.g.
+    ///     a separate unsigned relay-envelope wrapper) to get one.
+    fn build_relay_action(&self, header: &MeshPacketHeader, raw_packet: &[u8]) -> Option<Action> {
+        let next_hop = if header.destination == rezvan_common::BROADCAST_DESTINATION {
+            crate::action::BROADCAST_TARGET
+        } else {
+            self.routing.get_best_route(&header.destination).map(|r| r.next_hop)?
+        };
+
+        let can_mutate_header = header.packet_type == 0x02;
+        let data = if can_mutate_header {
+            let mut relayed = MeshPacketHeader {
+                ttl: header.ttl.saturating_sub(1),
+                hop_count: header.hop_count.saturating_add(1),
+                ..header.clone()
+            }
+            .serialize();
+            // Append the original payload (everything after the old header,
+            // i.e. the Olm ciphertext for 0x02) unchanged.
+            relayed.extend_from_slice(&raw_packet[MeshPacketHeader::SIZE..]);
+            relayed
+        } else {
+            raw_packet.to_vec()
+        };
+
+        Some(Action::SendBlePacket { target: next_hop, data })
+    }
+
+    /// The per-packet-type handling previously inlined directly in
+    /// `process_incoming`'s dispatch match. Factored out so relay (above)
+    /// can invoke it for broadcast types that are both "for us" and "for
+    /// everyone else," without duplicating the decrypt/verify logic.
+    fn dispatch_packet(
+        &mut self,
+        header: &MeshPacketHeader,
+        raw_packet: &[u8],
+        payload_end: usize,
+        timestamp: u64,
+        rssi: i32,
+    ) -> (Option<DecryptedMessage>, Vec<Action>) {
         match header.packet_type {
             0x01 => {
-                // Full OGM over GATT (not yet sent -- signature verified above,
-                // feed into routing table).
+                // Full OGM over GATT -- signature verified above, feed into
+                // routing table so multi-hop routes propagate.
                 let _ = self.routing.process_ogm(raw_packet, rssi);
                 (None, Vec::new())
             }
@@ -479,14 +641,26 @@ impl MeshEngine {
         };
 
         // 0x02 (direct message): authenticated by Olm AEAD, no extra Ed25519 sig.
+        // `next_hop` is resolved via the routing table (same reasoning as
+        // build_signed_packet): if `recipient` isn't a direct neighbour but
+        // we have a multi-hop route to them, forward toward that route's
+        // next hop instead of assuming direct delivery.
+        let next_hop = self
+            .routing
+            .get_best_route(recipient)
+            .map(|r| r.next_hop)
+            .unwrap_or(*recipient);
+
+        self.ogm_sequence = self.ogm_sequence.wrapping_add(1);
         let header = MeshPacketHeader {
             version: MESH_PACKET_VERSION,
             packet_type: 0x02,
             ttl: 10,
             originator: self.node_id,
+            destination: *recipient,
             sequence: self.ogm_sequence,
             hop_count: 0,
-            next_hop: *recipient,
+            next_hop,
             payload_len: encrypted.len() as u16,
         };
 
@@ -494,13 +668,13 @@ impl MeshEngine {
         packet.extend_from_slice(&encrypted);
 
         vec![Action::SendBlePacket {
-            // Direct message: target the SPECIFIC recipient, not everyone
-            // we're connected to. Previously this used the broadcast
-            // sentinel for every send, meaning 1:1 messages were physically
-            // transmitted to every GATT-connected peer (relying on
-            // decryption failure to keep them private rather than actually
-            // routing only to the intended recipient).
-            target: *recipient,
+            // Radio-layer target for THIS hop -- may be an intermediate
+            // relay, not necessarily `recipient` itself. Previously this
+            // used the broadcast sentinel for every send, meaning 1:1
+            // messages were physically transmitted to every GATT-connected
+            // peer (relying on decryption failure to keep them private
+            // rather than actually routing only to the intended recipient).
+            target: next_hop,
             data: packet,
         }]
     }
@@ -620,25 +794,44 @@ impl MeshEngine {
     // ── Private helpers ─────────────────────────────────────────────────────
 
     /// Build a signed `MeshPacketHeader` packet:
-    /// `[header:26][payload:N][Ed25519_sig:64]`.
+    /// `[header:34][payload:N][Ed25519_sig:64]`.
     /// Used for all packet types except 0x02 (Olm AEAD is sufficient there).
+    ///
+    /// `destination` is the packet's final recipient (`BROADCAST_TARGET` for
+    /// mesh-wide packets). `next_hop` -- the immediate radio-layer target for
+    /// just this one hop -- is resolved here from the routing table rather
+    /// than being passed in by the caller: for a direct/broadcast send it's
+    /// the same as `destination`, but a relayed packet (see
+    /// `MeshEngine::relay_packet`) needs `next_hop` to be an actual
+    /// discovered neighbour on the path toward `destination`, which only
+    /// this engine (not the caller) has visibility into.
     fn build_signed_packet(
         &mut self,
         packet_type: u8,
         ttl: u8,
-        next_hop: &NodeId,
+        destination: &NodeId,
         payload: &[u8],
     ) -> Vec<u8> {
         self.ogm_sequence = self.ogm_sequence.wrapping_add(1);
+
+        let next_hop = if *destination == crate::action::BROADCAST_TARGET {
+            crate::action::BROADCAST_TARGET
+        } else {
+            self.routing
+                .get_best_route(destination)
+                .map(|r| r.next_hop)
+                .unwrap_or(*destination) // no known route yet: try direct (1-hop) delivery
+        };
 
         let header = MeshPacketHeader {
             version: MESH_PACKET_VERSION,
             packet_type,
             ttl,
             originator: self.node_id,
+            destination: *destination,
             sequence: self.ogm_sequence,
             hop_count: 0,
-            next_hop: *next_hop,
+            next_hop,
             payload_len: payload.len() as u16,
         };
 
@@ -746,6 +939,7 @@ mod tests {
             packet_type: 0x05,
             ttl: 1,
             originator: alice.node_id, // forged: claims to be Alice
+            destination: rezvan_common::BROADCAST_DESTINATION,
             sequence: mallory.ogm_sequence,
             hop_count: 0,
             next_hop: [0u8; 8],
@@ -1111,5 +1305,227 @@ mod tests {
 
         let snap = bob.routing_snapshot();
         assert_eq!(snap[0], 0, "unverified beacon (no shared epoch key) must not add a route");
+    }
+
+    // ---- Multi-hop relay tests (version 0x03 wire format) ------------------
+
+    /// Directly seed `engine`'s routing table with a route to `dest` via
+    /// `next_hop`, bypassing real beacon exchange. Test-only: production
+    /// code populates routes exclusively through `process_beacon`/
+    /// `process_ogm`. `mut engine: &mut MeshEngine` avoids needing a public
+    /// setter on `RoutingTable` just for this.
+    fn seed_route(engine: &mut MeshEngine, dest: NodeId, next_hop: NodeId) {
+        engine.routing.process_beacon(
+            &rezvan_common::AdvBeaconExt {
+                version: rezvan_common::AdvBeaconExt::VERSION,
+                packet_type: 0x01,
+                originator: dest,
+                sequence: 1,
+                battery: 80,
+                power_state: 1,
+                node_flags: 0,
+                mac: [0u8; 7],
+            },
+            -60,
+            true, // pretend verified -- test-only shortcut, see fn docs
+        );
+        // process_beacon always routes a fresh entry's next_hop to the
+        // beacon's own originator (i.e. "dest is 1 hop away, next_hop ==
+        // dest"). For a genuine multi-hop seed (next_hop != dest) we need to
+        // patch the entry afterward -- there's no public API for "learn a
+        // route to X via next-hop Y" since real code only ever learns that
+        // from an actual OGM (`process_ogm`), and building a signed OGM
+        // packet here would need a full engine, not just a routing table.
+        if next_hop != dest {
+            let mut entries = engine.routing.get_routes(&dest).to_vec();
+            for e in entries.iter_mut() {
+                e.next_hop = next_hop;
+            }
+            engine.routing.test_only_set_routes(dest, entries);
+        }
+    }
+
+    #[test]
+    fn test_unicast_relayed_through_intermediate_hop() {
+        // Alice -> [relay: Bob] -> Carol. Alice and Carol are NOT direct
+        // neighbours; Bob has routes to both. Alice sends Carol a direct
+        // message; Bob (as the intermediate hop) must forward it on toward
+        // Carol rather than trying to decrypt it himself (wrong Olm
+        // session -- it would just fail) or dropping it.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        let carol = make_engine(3);
+
+        // Alice needs a session with Carol to send an encrypted 0x02 --
+        // exchange keys directly (in reality this might itself go through
+        // relay, but that's a separate concern from what this test checks).
+        let carol_bundle_holder = {
+            let mut carol_for_bundle = make_engine(3);
+            carol_for_bundle.key_bundle()
+        };
+        alice.register_peer_keys(&carol.node_id, &carol_bundle_holder);
+
+        // Alice's routing table must know to reach Carol via Bob.
+        seed_route(&mut alice, carol.node_id, bob.node_id);
+        // Bob must know how to reach Carol directly (Bob IS a neighbour of
+        // Carol, even though Alice isn't).
+        seed_route(&mut bob, carol.node_id, carol.node_id);
+
+        let actions = alice.send_message(&carol.node_id, b"hello via relay", 0);
+        assert_eq!(actions.len(), 1, "send_message should produce exactly one SendBlePacket");
+        let Action::SendBlePacket { target, data } = &actions[0] else {
+            panic!("expected SendBlePacket");
+        };
+        assert_eq!(*target, bob.node_id, "Alice must send toward Bob (the resolved next hop), not directly to Carol");
+
+        // Bob receives it. He is NOT the destination (Carol is), so he must
+        // relay rather than attempt to decrypt.
+        let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
+        assert!(msg.is_none(), "Bob is not the final recipient -- must not surface a decrypted message locally");
+        assert_eq!(bob_actions.len(), 1, "Bob must relay exactly one packet");
+        let Action::SendBlePacket { target, data: relayed_data } = &bob_actions[0] else {
+            panic!("expected relayed SendBlePacket");
+        };
+        assert_eq!(*target, carol.node_id, "Bob must relay toward Carol (his resolved next hop for Carol)");
+
+        // The relayed packet must have ttl decremented and hop_count
+        // incremented relative to what Alice originally sent (0x02 has no
+        // outer signature, so this mutation is safe -- see
+        // build_relay_action's docs).
+        let original_header = rezvan_common::MeshPacketHeader::deserialize(data).unwrap();
+        let relayed_header = rezvan_common::MeshPacketHeader::deserialize(relayed_data).unwrap();
+        assert_eq!(relayed_header.ttl, original_header.ttl - 1, "relay must decrement ttl for unsigned (0x02) packets");
+        assert_eq!(relayed_header.hop_count, original_header.hop_count + 1, "relay must increment hop_count for unsigned (0x02) packets");
+        assert_eq!(relayed_header.originator, alice.node_id, "originator must be preserved through relay");
+        assert_eq!(relayed_header.destination, carol.node_id, "destination must be preserved through relay");
+    }
+
+    #[test]
+    fn test_unicast_not_addressed_to_us_and_no_route_is_dropped() {
+        // If we're not the destination and we have no route to relay
+        // through, the packet must be dropped, not silently misdelivered or
+        // panicked on.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        let carol = make_engine(3);
+
+        let carol_bundle = {
+            let mut carol_for_bundle = make_engine(3);
+            carol_for_bundle.key_bundle()
+        };
+        alice.register_peer_keys(&carol.node_id, &carol_bundle);
+        // Bob is given no route to Carol at all.
+
+        let actions = alice.send_message(&carol.node_id, b"undeliverable", 0);
+        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+
+        let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
+        assert!(msg.is_none());
+        assert!(bob_actions.is_empty(), "no route to relay through -- must drop silently, not error or misdeliver");
+    }
+
+    #[test]
+    fn test_relay_loop_prevented_by_seen_and_record() {
+        // A relay-candidate packet (originator, sequence) that this node has
+        // already relayed once must be dropped on a second sighting, even
+        // if it would otherwise still look relayable (e.g. arriving again
+        // via a different simulated neighbour) -- this is what actually
+        // prevents infinite re-flooding in a real mesh with cycles.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        let carol = make_engine(3);
+
+        let carol_bundle = {
+            let mut carol_for_bundle = make_engine(3);
+            carol_for_bundle.key_bundle()
+        };
+        alice.register_peer_keys(&carol.node_id, &carol_bundle);
+        seed_route(&mut alice, carol.node_id, bob.node_id);
+        seed_route(&mut bob, carol.node_id, carol.node_id);
+
+        let actions = alice.send_message(&carol.node_id, b"loop test", 0);
+        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+
+        let (_msg1, actions1) = bob.process_incoming(data, -60, 0);
+        assert_eq!(actions1.len(), 1, "first sighting must relay");
+
+        // Simulate the exact same wire bytes arriving at Bob again (e.g. a
+        // duplicate delivery, or a routing cycle looping it back).
+        let (_msg2, actions2) = bob.process_incoming(data, -60, 0);
+        assert!(actions2.is_empty(), "second sighting of the same (originator, sequence) must be dropped, not relayed again");
+    }
+
+    #[test]
+    fn test_broadcast_relay_also_processed_locally() {
+        // 0x03 emergency broadcast: a relay-candidate node that is itself a
+        // legitimate recipient (broadcast = everyone) must BOTH surface the
+        // decrypted/plaintext message locally AND re-flood it onward -- the
+        // two are not mutually exclusive for broadcast-scoped types.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+
+        // Bob needs Alice's Ed25519 identity key on file to verify her
+        // signed 0x03 broadcast (see needs_sig / the signature-check block
+        // in process_incoming) -- without this, the packet is rejected
+        // before dispatch ever runs, regardless of relay logic.
+        let alice_bundle = alice.key_bundle();
+        bob.register_peer_keys(&alice.node_id, &alice_bundle);
+
+        let actions = alice.send_broadcast(b"evacuate now");
+        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+
+        let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
+        assert!(msg.is_some(), "broadcast recipient must surface the message locally");
+        assert_eq!(msg.unwrap().content, b"evacuate now");
+        assert_eq!(bob_actions.len(), 1, "broadcast must also be re-flooded onward");
+        let Action::SendBlePacket { target, .. } = &bob_actions[0] else { panic!("expected re-flood SendBlePacket") };
+        assert_eq!(*target, crate::action::BROADCAST_TARGET, "re-flood target must be the broadcast sentinel");
+    }
+
+    #[test]
+    fn test_ogm_broadcast_from_tick_updates_receiver_routing_table() {
+        // Regression test for the "OGM never sent" gap: tick() must now
+        // actually emit a signed 0x01 OGM broadcast (not just the
+        // lightweight AdvBeaconExt beacon), and a receiver must be able to
+        // verify and process it via the same signature-check path as every
+        // other signed packet type.
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+
+        // Bob needs Alice's Ed25519 identity key to verify her OGM's
+        // signature (see engine.rs's needs_sig verification block).
+        let alice_bundle = alice.key_bundle();
+        bob.register_peer_keys(&alice.node_id, &alice_bundle);
+
+        // Give Alice a route to advertise (a neighbour of hers), so her OGM
+        // payload is non-trivial. Not strictly required for this test, but
+        // keeps it honest about what a real OGM broadcast carries.
+        let dave = make_engine(4);
+        seed_route(&mut alice, dave.node_id, dave.node_id);
+
+        let mut ogm_packet: Option<Vec<u8>> = None;
+        for _ in 0..200 {
+            for action in alice.tick() {
+                if let Action::SendBlePacket { data, .. } = &action {
+                    if let Some(header) = rezvan_common::MeshPacketHeader::deserialize(data) {
+                        if header.packet_type == 0x01 {
+                            ogm_packet = Some(data.clone());
+                        }
+                    }
+                }
+            }
+            if ogm_packet.is_some() { break; }
+        }
+        let packet = ogm_packet.expect("tick() should emit a signed 0x01 OGM broadcast within 200 ticks");
+
+        let (msg, actions) = bob.process_incoming(&packet, -60, 0);
+        assert!(msg.is_none(), "an OGM produces no decrypted message");
+        // 0x01 is deliberately excluded from the relay-candidate set (see
+        // process_incoming's relay section), so Bob must not try to relay
+        // it -- only feed it into his routing table.
+        assert!(actions.is_empty(), "OGM is not a relay-candidate type; only routing-table bookkeeping happens");
+
+        let snap = bob.routing_snapshot();
+        assert!(snap[0] >= 1, "Bob's routing table should reflect Alice as a route after processing her OGM");
     }
 }

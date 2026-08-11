@@ -131,7 +131,14 @@ class RadioControllerImpl(private val context: Context) : RadioController {
                     bleScanner = bluetoothAdapter?.bluetoothLeScanner
                     bleAdvertiser = bluetoothAdapter?.bluetoothLeAdvertiser
                     if (isScanning.get()) {
-                        startBleScan(1000, 1000)
+                        // Resume whatever duty cycle was active before BT
+                        // was disabled, instead of resetting to a hardcoded
+                        // continuous scan -- startBleScan now genuinely
+                        // honors these parameters (see its docs), so
+                        // silently discarding the current power state's
+                        // interval/window here would undo that.
+                        isScanning.set(false) // let startBleScan's "already scanning" guard not short-circuit this restart
+                        startBleScan(currentScanIntervalMs, currentScanWindowMs)
                     }
                     if (isAdvertising.get() && pendingAdvertiseData != null) {
                         startLegacyAdvertising(pendingAdvertiseData!!)
@@ -178,6 +185,30 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         // GATT server is deferred to startBleScan or tick – avoids Samsung null-parameter crash
     }
 
+    /**
+     * Bug fix: this function used to accept `intervalMs`/`windowMs` and
+     * then completely ignore both, always running a single continuous
+     * `SCAN_MODE_LOW_LATENCY` scan regardless of what was requested. The
+     * Rust power-state machine (`rezvan-core::power::get_scan_params`)
+     * computes real per-power-state interval/window pairs (e.g. Active:
+     * 1000/250ms, Balanced: 5000/250ms, PowerSaver: 30000/100ms, Minimal:
+     * 120000/50ms) and correctly dispatches them here via
+     * `Action::UpdateScanInterval` -> `ActionDispatcher` -> this function
+     * (see engine.rs's `tick()` and ActionDispatcher.kt's action type
+     * 0x04) -- but this function threw them away, so the phone always
+     * scanned like it was in the most aggressive power state, regardless
+     * of battery level. This is very likely a real contributor to reports
+     * of excess battery drain and to peer discovery not "hopping" between
+     * active/idle the way the power-state design intends.
+     *
+     * Android's public `BluetoothLeScanner`/`ScanSettings` API has no
+     * direct interval/window knob (only the coarse `ScanMode` enum:
+     * LOW_POWER/BALANCED/LOW_LATENCY/OPPORTUNISTIC) -- so real duty-cycling
+     * is implemented here at the app level: scan continuously for
+     * `windowMs`, then stop and idle for the remainder of `intervalMs`,
+     * repeat. This is the standard approach recommended for apps needing
+     * power-aware BLE scanning beyond what `ScanMode` alone provides.
+     */
     override fun startBleScan(intervalMs: Long, windowMs: Long) {
         if (!hasScanPermission()) {
             DiagLogger.ble("startBleScan ABORT: missing BLUETOOTH_SCAN permission")
@@ -195,15 +226,67 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         if (gattServer == null && !gattServerStartAttempted) {
             startGattServerIfPermitted()
         }
-        if (isScanning.get()) return
+        if (isScanning.get()) {
+            // Already running a duty cycle -- update its parameters in
+            // place for the next cycle rather than starting a second,
+            // overlapping one. Restarting immediately with the new
+            // parameters keeps behavior responsive to power-state changes
+            // instead of waiting out however much of the old cycle
+            // remains.
+            currentScanIntervalMs = intervalMs
+            currentScanWindowMs = windowMs
+            DiagLogger.ble("startBleScan: already scanning, updated duty cycle", "interval" to intervalMs.toString(), "window" to windowMs.toString())
+            return
+        }
         isScanning.set(true)
+        currentScanIntervalMs = intervalMs
+        currentScanWindowMs = windowMs
 
+        DiagLogger.ble("BLE scan starting -- duty cycle", "interval" to intervalMs.toString(), "window" to windowMs.toString())
+        scanHandler.removeCallbacksAndMessages(null)
+        scanHandler.post(scanDutyCycleRunnable)
+    }
+
+    private var currentScanIntervalMs: Long = 1000
+    private var currentScanWindowMs: Long = 1000
+
+    /**
+     * A window <= 0 or >= interval means "scan continuously" (matches the
+     * old always-on behavior, and covers PowerState::Emergency/Active-like
+     * cases where the caller wants no idle gap at all). Otherwise: start
+     * the radio scan, run it for `currentScanWindowMs`, stop it, wait out
+     * the remaining `currentScanIntervalMs - currentScanWindowMs`, repeat.
+     */
+    private val scanDutyCycleRunnable = object : Runnable {
+        override fun run() {
+            if (!isScanning.get()) return // stopBleScan() was called mid-cycle
+
+            val window = currentScanWindowMs
+            val interval = currentScanIntervalMs
+            val continuous = window <= 0 || window >= interval
+
+            beginRadioScan()
+
+            if (continuous) {
+                // No duty-cycling requested for this power state -- just
+                // keep the radio scan running; nothing more to schedule.
+                return
+            }
+
+            scanHandler.postDelayed({
+                if (!isScanning.get()) return@postDelayed
+                endRadioScan()
+                val idleMs = (interval - window).coerceAtLeast(0)
+                scanHandler.postDelayed(scanDutyCycleRunnable, idleMs)
+            }, window)
+        }
+    }
+
+    private fun beginRadioScan() {
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
             .build()
-
-        DiagLogger.ble("BLE scan starting – legacy mode, continuous")
         try {
             bleScanner?.startScan(null, settings, scanCallback)
         } catch (e: SecurityException) {
@@ -212,13 +295,19 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         }
     }
 
+    private fun endRadioScan() {
+        try { bleScanner?.stopScan(scanCallback) } catch (t: Throwable) {
+            DiagLogger.ble("endRadioScan (duty-cycle pause) threw: ${t.message}")
+        }
+    }
+
     override fun stopBleScan() {
         if (!isScanning.get()) return
         isScanning.set(false)
+        scanHandler.removeCallbacksAndMessages(null)
         try { bleScanner?.stopScan(scanCallback) } catch (t: Throwable) {
             DiagLogger.ble("stopBleScan threw: ${t.message}")
         }
-        scanHandler.removeCallbacksAndMessages(null)
         DiagLogger.ble("BLE scan stopped")
     }
 
@@ -816,10 +905,43 @@ class RadioControllerImpl(private val context: Context) : RadioController {
             try { socket.close() } catch (_: IOException) {}
         }
     }
-    private fun handleWifiClient(socket: Socket) {}
-    private fun stopWifiServer() {}
+    /**
+     * Stops the WiFi Direct server thread and closes its listening socket +
+     * any connected clients. Was previously an empty stub (`{}`) that did
+     * nothing -- `onDestroy()` happened to do the equivalent cleanup work
+     * inline instead of calling this, so there was no actual resource leak
+     * in the one place this was invoked from, but the stub itself was dead,
+     * misleading code: its doc-implied contract ("stop the server") was
+     * never fulfilled, and any future caller relying on it to actually stop
+     * the server (e.g. to restart on a WiFi Direct group re-formation,
+     * which this class does not currently do but plausibly could) would
+     * have silently gotten a no-op. Implemented for real here, and
+     * `onDestroy()` below now calls this instead of duplicating the same
+     * cleanup inline.
+     */
+    private fun stopWifiServer() {
+        serverThread.get()?.interrupt()
+        try { serverSocket?.close() } catch (_: IOException) {}
+        serverSocket = null
+        wifiClients.values.forEach { try { it.close() } catch (_: IOException) {} }
+        wifiClients.clear()
+        DiagLogger.ble("WiFi Direct server stopped")
+    }
 
-    override fun getCurrentRssi(peerMacAddress: String) = Int.MIN_VALUE
+    override fun getCurrentRssi(peerMacAddress: String): Int {
+        // Bug fix: this was hardcoded to always return Int.MIN_VALUE, even
+        // though the real, live RSSI cache (`cachedRssiMap`, populated in
+        // scanCallback.onScanResult above) already exists in this same
+        // class. Nothing calls this method today (confirmed: it's declared
+        // on the RadioController interface but has no callers anywhere in
+        // the app), so this was a landmine for any future caller rather
+        // than an active bug -- but a public method silently ignoring the
+        // working data sitting right next to it is exactly the kind of
+        // thing that causes a confusing regression later. Int.MIN_VALUE is
+        // kept as the not-found fallback (same sentinel the old code always
+        // returned), now only for a MAC we've genuinely never heard from.
+        return cachedRssiMap[peerMacAddress] ?: Int.MIN_VALUE
+    }
     override fun setBleTxPower(dbm: Int) {}
     override fun setWifiTxPower(dbm: Int) {}
 
@@ -840,10 +962,7 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         gattServer?.close()
         try { context.unregisterReceiver(btStateReceiver) } catch (_: Throwable) {}
         try { wifiDirectReceiver?.let { context.unregisterReceiver(it) } } catch (_: Throwable) {}
-        serverThread.get()?.interrupt()
-        try { serverSocket?.close() } catch (_: IOException) {}
-        wifiClients.values.forEach { try { it.close() } catch (_: IOException) {} }
-        wifiClients.clear()
+        stopWifiServer()
         wifiSenders.values.forEach { it.close() }
         wifiSenders.clear()
         try { wifiP2pChannel?.let { wifiP2pManager?.stopPeerDiscovery(it, null) } } catch (_: Throwable) {}
