@@ -257,7 +257,7 @@ class RadioControllerImpl(private val context: Context) : RadioController {
      * the radio scan, run it for `currentScanWindowMs`, stop it, wait out
      * the remaining `currentScanIntervalMs - currentScanWindowMs`, repeat.
      */
-    private val scanDutyCycleRunnable = object : Runnable {
+    private val scanDutyCycleRunnable: Runnable = object : Runnable {
         override fun run() {
             if (!isScanning.get()) return // stopBleScan() was called mid-cycle
 
