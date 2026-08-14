@@ -78,7 +78,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Whether `System.loadLibrary("sqlcipher")` has been called yet.
+         * Bug fix: the sqlcipher-android 4.x artifact (migrated to from the
+         * deprecated android-database-sqlcipher package -- see the
+         * dependency comment in app/build.gradle.kts) does NOT auto-load
+         * its native library the way the old package did via
+         * SQLiteDatabase.loadLibs(). Per Zetetic's own docs and the
+         * library's README, `System.loadLibrary("sqlcipher")` must be
+         * called explicitly before ANY database operation -- and nothing
+         * in this codebase was doing that, so every attempt to open the
+         * database (Contacts, Messages, Chat Detail -- anything going
+         * through AppDatabase) crashed with:
+         *   UnsatisfiedLinkError: No implementation found for long
+         *   net.zetetic.database.sqlcipher.SQLiteConnection.nativeOpen(...)
+         * The crash surfaces asynchronously on a background thread (Room's
+         * connection pool opens lazily on first real use, not inside
+         * `.build()` itself), which is why it appeared as an unhandled
+         * exception on tapping into Contacts/Messages rather than at
+         * service startup.
+         */
+        @Volatile
+        private var sqlCipherLoaded = false
+
+        @Synchronized
+        private fun ensureSqlCipherLoaded() {
+            if (sqlCipherLoaded) return
+            System.loadLibrary("sqlcipher")
+            sqlCipherLoaded = true
+        }
+
         private fun buildDatabase(context: Context, passphrase: ByteArray): AppDatabase {
+            ensureSqlCipherLoaded()
             val factory = SupportOpenHelperFactory(passphrase)
             return Room.databaseBuilder(
                 context.applicationContext,
