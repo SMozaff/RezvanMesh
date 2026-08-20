@@ -81,6 +81,7 @@ fun CreateChannelScreen(
             // Channel was just created -- show the share key before leaving.
             val (channelId, key) = createdKey!!
             val keyHex = key.joinToString("") { "%02x".format(it) }
+            var showRawKey by remember(channelId, keyHex) { mutableStateOf(false) }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -118,7 +119,23 @@ fun CreateChannelScreen(
                             )
                         }
                         Spacer(Modifier.height(12.dp))
-                        SelectionContainerCompat(keyHex)
+                        OutlinedButton(onClick = { showRawKey = !showRawKey }) {
+                            Text(
+                                stringResource(
+                                    if (showRawKey) R.string.hide_raw_channel_key
+                                    else R.string.show_raw_channel_key
+                                )
+                            )
+                        }
+                        if (showRawKey) {
+                            Text(
+                                stringResource(R.string.raw_channel_key_warning),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            SelectionContainerCompat(keyHex)
+                        }
                     }
                 }
                 Button(

@@ -61,6 +61,9 @@
     <string name="scan_contact_qr_prompt">Point the camera at a Rezvan contact QR code</string>
     <string name="invalid_channel_qr">This isn\'t a valid RezvanMesh channel QR code.</string>
     <string name="join_with_qr">Join with QR code</string>
+    <string name="show_raw_channel_key">Show raw channel key</string>
+    <string name="hide_raw_channel_key">Hide raw channel key</string>
+    <string name="raw_channel_key_warning">Treat this key as sensitive. Share the QR code when possible and do not post the raw key publicly.</string>
 
     <!-- Contacts -->
     <string name="contacts_title">Contacts</string>
