@@ -36,9 +36,8 @@ fun NetworkScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     var showQrDialog by remember { mutableStateOf(false) }
-    val ownNodeIdHex = remember {
-        MeshServiceConnection.activeService?.ownNodeId?.joinToString("") { "%02x".format(it) } ?: ""
-    }
+    val ownNodeId by MeshServiceConnection.ownNodeId.collectAsState()
+    val ownNodeIdHex = ownNodeId?.joinToString("") { "%02x".format(it) }.orEmpty()
 
     Scaffold(
         topBar = {

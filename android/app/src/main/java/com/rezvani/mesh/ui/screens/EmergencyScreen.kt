@@ -21,6 +21,7 @@ import com.rezvani.mesh.ui.viewmodel.EmergencySendStatus
 @Composable
 fun EmergencyScreen(viewModel: EmergencyViewModel = viewModel()) {
     val uiState by viewModel.uiState.collectAsState()
+    val isSubmitting = uiState.sendStatus is EmergencySendStatus.Submitting
     var showConfirmDialog by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -53,15 +54,15 @@ fun EmergencyScreen(viewModel: EmergencyViewModel = viewModel()) {
 
             // Status feedback (compact)
             when (val status = uiState.sendStatus) {
-                is EmergencySendStatus.Sending -> {
+                is EmergencySendStatus.Submitting -> {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Text(stringResource(R.string.sending_emergency),
+                    Text("Submitting alert to the local mesh…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                is EmergencySendStatus.Success -> {
+                is EmergencySendStatus.Queued -> {
                     Surface(shape = MaterialTheme.shapes.small,
-                        color = MaterialTheme.colorScheme.primaryContainer,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
                         modifier = Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(12.dp),
@@ -69,19 +70,13 @@ fun EmergencyScreen(viewModel: EmergencyViewModel = viewModel()) {
                         ) {
                             Text(status.message, style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 textAlign = TextAlign.Center)
-                            // Remediation #1: SOS/emergency broadcasts are always
-                            // signed-only, never encrypted (MeshEngine::send_broadcast,
-                            // packet type 0x03) -- by design, so the alert reaches
-                            // everyone immediately without needing a prior secure
-                            // session. Make that visible here rather than leaving it
-                            // as an assumption only documented in code.
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                stringResource(R.string.emergency_sent_unencrypted_badge),
+                                "Emergency broadcasts are signed but not encrypted. Queued does not mean delivered.",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -103,6 +98,7 @@ fun EmergencyScreen(viewModel: EmergencyViewModel = viewModel()) {
             // Single compact broadcast button
             Button(
                 onClick = { showConfirmDialog = true },
+                enabled = !isSubmitting,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 shape = MaterialTheme.shapes.medium

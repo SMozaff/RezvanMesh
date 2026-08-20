@@ -34,10 +34,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.backup.IdentityBackupHelper
 import com.rezvani.mesh.radio.RezvanRadioService
 import com.rezvani.mesh.ui.navigation.MainScreenWithBottomNav
+import com.rezvani.mesh.ui.screens.OnboardingScreen
 import com.rezvani.mesh.ui.theme.RezvanMeshTheme
+import com.rezvani.mesh.ui.viewmodel.MainViewModel
 import com.rezvani.mesh.utils.DiagLogger
 import com.rezvani.mesh.utils.LocaleHelper
 import com.rezvani.mesh.utils.PowerProfileManager
@@ -151,6 +154,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val darkMode = getDarkModeState()
+            val mainViewModel: MainViewModel = viewModel()
+            val onboardingComplete by mainViewModel.isOnboardingComplete.collectAsState()
             RezvanMeshTheme(darkTheme = darkMode) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val storageError by identityStorageError
@@ -166,6 +171,8 @@ class MainActivity : ComponentActivity() {
                             onOpenAppSettings = { openAppSettings() },
                             onOpenBattery = { openBatteryOptimization() }
                         )
+                    } else if (!onboardingComplete) {
+                        OnboardingScreen(onEnterMesh = { mainViewModel.setOnboardingComplete(true) })
                     } else {
                         MainScreenWithBottomNav()
                     }
@@ -182,7 +189,15 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun getDarkModeState(): Boolean {
         val prefs = remember { getSharedPreferences("rezvan_settings", Context.MODE_PRIVATE) }
-        return remember { mutableStateOf(prefs.getBoolean("dark_mode", true)) }.value
+        var darkMode by remember { mutableStateOf(prefs.getBoolean("dark_mode", true)) }
+        DisposableEffect(prefs) {
+            val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == "dark_mode") darkMode = prefs.getBoolean("dark_mode", true)
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+        return darkMode
     }
 
     private fun recheckAndStart() {
@@ -363,14 +378,11 @@ data class PermissionCheckResult(
     val btConnectPermission: Boolean = false,
     val batteryUnrestricted: Boolean = false
 ) {
-    // Core requirements that block the app; battery is strongly recommended
-    // but checked here as part of the full gate. WRITE_SETTINGS was dropped
-    // from both the manifest and this gate: no feature in the app actually
-    // writes to Settings.System (see security audit finding #7 / Fix 7),
-    // so requiring it was unnecessary attack surface with no functional need.
+    /** Essential prerequisites for mesh operation. Battery optimisation is a
+     * reliability recommendation, not an app-entry or service-start gate. */
     val allGranted get() = btEnabled && locationEnabled &&
         locationPermission && btScanPermission && btAdvertisePermission &&
-        btConnectPermission && batteryUnrestricted
+        btConnectPermission
 }
 
 // ── Blocking permission gate UI ───────────────────────────────────────────────
@@ -438,11 +450,12 @@ fun PermissionGate(
             )
         }
 
-        // Battery optimization
+        // Battery optimisation is optional. It improves background reliability
+        // but must not block access to the app or essential mesh operation.
         PermissionRow(
             icon = Icons.Default.BatteryAlert,
-            label = "Unrestricted Battery",
-            description = "Keeps the mesh running in the background",
+            label = "Unrestricted Battery (recommended)",
+            description = "Improves background reliability; you can continue without it",
             granted = result.batteryUnrestricted,
             actionLabel = "Allow",
             onAction = onOpenBattery
@@ -455,7 +468,7 @@ fun PermissionGate(
             modifier = Modifier.fillMaxWidth(),
             enabled = !result.allGranted
         ) {
-            Text("Grant Permissions")
+            Text("Enable Mesh")
         }
 
         if (!result.btScanPermission || !result.btAdvertisePermission || !result.btConnectPermission) {

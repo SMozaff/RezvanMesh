@@ -10,7 +10,15 @@ interface RadioController {
     fun connectToPeer(peerMacAddress: String): Boolean
     fun sendBlePacket(peerMacAddress: String, data: ByteArray): Boolean
     fun disconnectPeer(peerMacAddress: String)
-    fun sendBroadcastPacket(data: ByteArray)
+
+    /**
+     * Queue a logical packet for every live GATT sender.
+     *
+     * [SendResult.Queued] confirms local queue acceptance only; it is not a
+     * remote delivery acknowledgement.
+     */
+    fun sendBroadcastPacket(data: ByteArray): SendResult
+
     fun isWifiDirectSupported(): Boolean
     fun startWifiDirectDiscovery()
     fun stopWifiDirectDiscovery()
@@ -28,16 +36,9 @@ interface RadioController {
     fun getMacForNodeId(nodeIdHex: String): String?
 
     /**
-     * Send a packet addressed to a specific peer, identified by their mesh
-     * NodeId rather than a raw BLE MAC. Resolves NodeId -> MAC via
-     * [getMacForNodeId] and attempts delivery over an existing GATT
-     * connection; if no connection exists yet (or the write itself isn't
-     * ready), queues the packet so it's flushed automatically once GATT
-     * service discovery completes for that peer (see
-     * [RadioControllerImpl.onServicesDiscovered]'s pending-packet flush).
-     * Returns true if the packet was either sent immediately or queued for
-     * later delivery (i.e. not silently dropped); false only if the peer's
-     * MAC couldn't be resolved at all.
+     * Queue a packet addressed to a specific mesh NodeId. A [SendResult.Queued]
+     * response means the local radio controller accepted the work. It does not
+     * promise a successful GATT write or remote receipt.
      */
-    fun sendToNodeId(nodeIdHex: String, data: ByteArray): Boolean
+    fun sendToNodeId(nodeIdHex: String, data: ByteArray): SendResult
 }

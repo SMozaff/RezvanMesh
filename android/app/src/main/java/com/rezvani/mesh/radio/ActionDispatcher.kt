@@ -8,21 +8,27 @@ object ActionDispatcher {
 
     private val ALL_ZERO_TARGET = ByteArray(8)
 
-    fun dispatch(action: ByteArray, radio: RadioController) {
-        if (action.size < 4) return
+    /**
+     * Dispatches native action envelopes. For send actions the returned value
+     * expresses only whether the local radio controller accepted the packet;
+     * it must never be interpreted as remote delivery.
+     */
+    fun dispatch(action: ByteArray, radio: RadioController): SendResult {
+        if (action.size < 4) return SendResult.Failed("Invalid mesh action frame")
         val actionCount = action[0].toInt() and 0xFF
         var offset = 1
+        var transportResult: SendResult = SendResult.Failed("No transport action produced")
         for (i in 0 until actionCount) {
-            if (offset + 3 > action.size) break
+            if (offset + 3 > action.size) return SendResult.Failed("Truncated mesh action frame")
             val actionType = action[offset].toInt() and 0xFF
             val payloadLen = ((action[offset + 1].toInt() and 0xFF) shl 8) or (action[offset + 2].toInt() and 0xFF)
             offset += 3
-            if (offset + payloadLen > action.size) break
+            if (offset + payloadLen > action.size) return SendResult.Failed("Truncated mesh action payload")
             val payload = action.copyOfRange(offset, offset + payloadLen)
             offset += payloadLen
             when (actionType) {
                 0x01 -> radio.startBleAdvertising(payload, 1000)
-                0x03 -> dispatchSendBlePacket(payload, radio)
+                0x03 -> transportResult = dispatchSendBlePacket(payload, radio)
                 0x04 -> {
                     if (payload.size >= 8) {
                         val intervalMs = ((payload[0].toInt() and 0xFF) shl 24) or
@@ -39,40 +45,26 @@ object ActionDispatcher {
                 else -> DiagLogger.ble("Unknown action type: $actionType")
             }
         }
+        return transportResult
     }
 
     /**
      * `payload` = [target NodeId : 8 bytes][packet data]. `target` is a mesh
-     * NodeId, NOT a BLE MAC -- Rust doesn't know about MAC addresses. An
-     * all-zero target is the broadcast sentinel (true broadcasts: emergency
-     * alerts, KeyAnnouncement); any other value is resolved via
-     * [RadioController.sendToNodeId], which looks up the peer's current MAC,
-     * sends immediately if a GATT sender is ready, or queues the packet
-     * until GATT service discovery completes for that peer.
-     *
-     * This is the fix for the bug where every "direct message" was
-     * physically broadcast to every connected peer instead of being routed
-     * only to its intended recipient (the dispatcher previously had no
-     * branch other than "broadcast to everyone" for this action type).
+     * NodeId, NOT a BLE MAC. An all-zero target represents a broadcast.
      */
-    private fun dispatchSendBlePacket(payload: ByteArray, radio: RadioController) {
+    private fun dispatchSendBlePacket(payload: ByteArray, radio: RadioController): SendResult {
         if (payload.size <= 8) {
             DiagLogger.ble("SendBlePacket payload too short (${payload.size} bytes), dropping")
-            return
+            return SendResult.Failed("Mesh packet was empty")
         }
         val target = payload.copyOfRange(0, 8)
         val data = payload.copyOfRange(8, payload.size)
 
         if (target.contentEquals(ALL_ZERO_TARGET)) {
-            DiagLogger.ble("Broadcasting packet to all connected peers", "len" to data.size.toString())
-            radio.sendBroadcastPacket(data)
-            return
+            return radio.sendBroadcastPacket(data)
         }
 
         val targetHex = target.joinToString("") { "%02x".format(it) }
-        val sent = radio.sendToNodeId(targetHex, data)
-        if (!sent) {
-            DiagLogger.ble("Could not send to $targetHex -- peer not yet discovered")
-        }
+        return radio.sendToNodeId(targetHex, data)
     }
 }

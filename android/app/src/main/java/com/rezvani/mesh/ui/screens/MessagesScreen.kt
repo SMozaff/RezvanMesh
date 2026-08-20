@@ -11,6 +11,9 @@ import androidx.compose.ui.unit.dp
 import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.data.Contact
 import com.rezvani.mesh.data.ContactsRepository
+import com.rezvani.mesh.radio.SendResult
+import com.rezvani.mesh.radio.failureMessage
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -21,6 +24,8 @@ fun MessagesScreen(meshConnection: MeshServiceConnection) {
     val contacts by repository.contacts.collectAsState()
     var selectedContact by remember { mutableStateOf<Contact?>(null) }
     var text by remember { mutableStateOf("") }
+    var sendError by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Mesh Messages", style = MaterialTheme.typography.headlineMedium)
@@ -68,12 +73,23 @@ fun MessagesScreen(meshConnection: MeshServiceConnection) {
                     contact.nodeIdHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
                 } catch (_: Exception) { null }
                 if (nodeIdBytes != null) {
-                    meshConnection.sendTextMessage(nodeIdBytes, text)
-                    text = ""
+                    coroutineScope.launch {
+                        val result = meshConnection.sendTextMessage(nodeIdBytes, text)
+                        if (result is SendResult.Queued) {
+                            text = ""
+                        } else {
+                            sendError = result.failureMessage()
+                        }
+                    }
+                } else {
+                    sendError = "Selected contact has an invalid mesh ID"
                 }
             }
         }, enabled = selectedContact != null && text.isNotBlank()) {
             Text("Send")
+        }
+        sendError?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
         Spacer(modifier = Modifier.height(12.dp))

@@ -37,9 +37,8 @@ fun ContactsScreen(
     val repository = remember { ContactsRepository(context) }
     val contacts by repository.contacts.collectAsState()
 
-    val ownNodeIdHex = remember {
-        MeshServiceConnection.activeService?.ownNodeId?.joinToString("") { "%02x".format(it) } ?: ""
-    }
+    val ownNodeId by MeshServiceConnection.ownNodeId.collectAsState()
+    val ownNodeIdHex = ownNodeId?.joinToString("") { "%02x".format(it) }.orEmpty()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showOwnQr by remember { mutableStateOf(false) }
@@ -47,6 +46,7 @@ fun ContactsScreen(
     var showScanError by remember { mutableStateOf<String?>(null) }
     var newContactName by remember { mutableStateOf("") }
     var manualNodeId by remember { mutableStateOf("") }
+    val validNodeId = remember(manualNodeId) { manualNodeId.matches(Regex("^[0-9A-Fa-f]{16}$")) }
     var selectedContacts by remember { mutableStateOf<Set<String>>(emptySet()) }
     val isInSelectionMode = selectedContacts.isNotEmpty()
 
@@ -64,7 +64,7 @@ fun ContactsScreen(
     LaunchedEffect(scanResult) {
         val scanned = scanResult?.trim()
         if (scanned != null) {
-            if (scanned.length == 16 && scanned.all { it.isLetterOrDigit() }) {
+            if (scanned.matches(Regex("^[0-9A-Fa-f]{16}$"))) {
                 manualNodeId = scanned.lowercase()
                 showAddDialog = true
             } else {
@@ -194,11 +194,15 @@ fun ContactsScreen(
                         modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(
                         value = manualNodeId,
-                        onValueChange = { manualNodeId = it.lowercase().filter { c -> c.isLetterOrDigit() } },
+                        onValueChange = {
+                            manualNodeId = it.lowercase().filter { c ->
+                                c.isDigit() || c in 'a'..'f'
+                            }.take(16)
+                        },
                         label = { Text("Node ID (16 hex chars)") }, singleLine = true,
-                        isError = manualNodeId.isNotEmpty() && manualNodeId.length != 16,
-                        supportingText = if (manualNodeId.isNotEmpty() && manualNodeId.length != 16)
-                            { { Text("Must be exactly 16 hex characters") } } else null,
+                        isError = manualNodeId.isNotEmpty() && !validNodeId,
+                        supportingText = if (manualNodeId.isNotEmpty() && !validNodeId)
+                            { { Text("Must be exactly 16 hexadecimal characters") } } else null,
                         modifier = Modifier.fillMaxWidth())
                     if (manualNodeId.isEmpty()) {
                         TextButton(onClick = { showAddDialog = false; onScanQr() }) {
@@ -211,13 +215,13 @@ fun ContactsScreen(
             },
             confirmButton = {
                 Button(onClick = {
-                    if (newContactName.isNotBlank() && manualNodeId.length == 16) {
+                    if (newContactName.isNotBlank() && validNodeId) {
                         repository.addContact(Contact(newContactName, manualNodeId))
                         newContactName = ""
                         manualNodeId = ""
                         showAddDialog = false
                     }
-                }, enabled = newContactName.isNotBlank() && manualNodeId.length == 16) {
+                }, enabled = newContactName.isNotBlank() && validNodeId) {
                     Text("Save")
                 }
             },

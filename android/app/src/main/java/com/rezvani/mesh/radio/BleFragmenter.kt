@@ -60,12 +60,15 @@ object BleFragmenter {
  */
 class BleReassembler(
     private val maxInFlight: Int = 8,
-    private val timeoutMs: Long = 15_000L
+    private val timeoutMs: Long = 15_000L,
+    private val maxFragments: Int = 4_096,
+    private val maxPacketBytes: Int = 64 * 1024
 ) {
     private class Partial(
         val total: Int,
         val chunks: Array<ByteArray?>,
         var received: Int,
+        var byteCount: Int,
         val firstSeen: Long
     )
 
@@ -86,7 +89,7 @@ class BleReassembler(
         val msgId = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
         val index = ((data[4].toInt() and 0xFF) shl 8) or (data[5].toInt() and 0xFF)
         val total = ((data[6].toInt() and 0xFF) shl 8) or (data[7].toInt() and 0xFF)
-        if (total == 0 || index >= total) return null
+        if (total == 0 || total > maxFragments || index >= total) return null
 
         purgeExpired()
 
@@ -95,12 +98,17 @@ class BleReassembler(
 
         val partial = partials.getOrPut(key) {
             if (partials.size >= maxInFlight) evictOldest()
-            Partial(total, arrayOfNulls(total), 0, System.currentTimeMillis())
+            Partial(total, arrayOfNulls(total), 0, 0, System.currentTimeMillis())
         }
 
         if (partial.total != total) { partials.remove(key); return null } // inconsistent
         if (partial.chunks[index] != null) return null                     // duplicate
+        if (partial.byteCount + chunk.size > maxPacketBytes) {
+            partials.remove(key)
+            return null
+        }
         partial.chunks[index] = chunk
+        partial.byteCount += chunk.size
         partial.received++
 
         if (partial.received == partial.total) {

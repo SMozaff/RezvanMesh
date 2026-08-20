@@ -32,6 +32,7 @@ fun ChannelsScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     var selectedChannel by remember { mutableStateOf<ChannelEntity?>(null) }
     var showPasswordDialog by remember { mutableStateOf(false) }
+    var showJoinError by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.refreshChannels()
@@ -128,12 +129,23 @@ fun ChannelsScreen(
                         showPasswordDialog = false
                         onChannelClick(selectedChannel!!.channelId, selectedChannel!!.name)
                     },
-                    onError = { /* Show error */ }
+                    onError = { showJoinError = true }
                 )
             },
             onDismiss = {
                 showPasswordDialog = false
                 selectedChannel = null
+            }
+        )
+    }
+
+    if (showJoinError) {
+        AlertDialog(
+            onDismissRequest = { showJoinError = false },
+            title = { Text("Could not join channel") },
+            text = { Text("The password was not accepted or this channel is unavailable. Check the invite details and try again.") },
+            confirmButton = {
+                TextButton(onClick = { showJoinError = false }) { Text(stringResource(R.string.close)) }
             }
         )
     }

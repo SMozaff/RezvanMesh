@@ -6,7 +6,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.rezvani.mesh.MeshServiceConnection
-import kotlinx.coroutines.delay
+import com.rezvani.mesh.radio.SendResult
+import com.rezvani.mesh.radio.failureMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,24 +22,32 @@ class EmergencyViewModel(application: Application) : AndroidViewModel(applicatio
         _uiState.value = _uiState.value.copy(selectedSeverity = level)
     }
 
+    /**
+     * Submits a signed emergency payload to the local mesh transport. The UI
+     * never describes this as delivered because the current protocol does not
+     * produce a remote acknowledgement on this path.
+     */
     fun sendEmergencyAlert() {
+        if (_uiState.value.sendStatus is EmergencySendStatus.Submitting) return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(sendStatus = EmergencySendStatus.Sending)
-            try {
-                val messageText = "EMERGENCY LEVEL ${_uiState.value.selectedSeverity}"
-                // Previously called sendMessage(broadcastId=[0xFF;8], ...) --
-                // the 1:1 Olm-encrypted direct-message path with a fake
-                // all-0xFF "recipient". There's no Olm session with that
-                // address, so send_message would silently fail every time.
-                // sendBroadcast calls the real signed broadcast path
-                // (MeshEngine::send_broadcast, packet_type 0x03).
-                MeshServiceConnection.activeService?.sendBroadcast(messageText.toByteArray())
-                delay(1000)
-                _uiState.value = _uiState.value.copy(sendStatus = EmergencySendStatus.Success("Alert sent"))
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(sendStatus = EmergencySendStatus.Failed(e.message ?: "Unknown error"))
-            }
+            _uiState.value = _uiState.value.copy(sendStatus = EmergencySendStatus.Submitting)
+            val messageText = "EMERGENCY LEVEL ${_uiState.value.selectedSeverity}"
+            val result = MeshServiceConnection.activeService
+                ?.sendBroadcast(messageText.toByteArray())
+                ?: SendResult.NotReady
+            _uiState.value = _uiState.value.copy(sendStatus = result.toEmergencyStatus())
         }
+    }
+
+    private fun SendResult.toEmergencyStatus(): EmergencySendStatus = when (this) {
+        is SendResult.Queued -> EmergencySendStatus.Queued(
+            if (peerCount == 1) {
+                "Alert queued for 1 nearby mesh peer. Delivery is not yet confirmed."
+            } else {
+                "Alert queued for $peerCount nearby mesh peers. Delivery is not yet confirmed."
+            }
+        )
+        else -> EmergencySendStatus.Failed(failureMessage())
     }
 }
 
@@ -48,8 +57,8 @@ data class EmergencyUiState(
 )
 
 sealed class EmergencySendStatus {
-    object Idle : EmergencySendStatus()
-    object Sending : EmergencySendStatus()
-    data class Success(val message: String) : EmergencySendStatus()
+    data object Idle : EmergencySendStatus()
+    data object Submitting : EmergencySendStatus()
+    data class Queued(val message: String) : EmergencySendStatus()
     data class Failed(val message: String) : EmergencySendStatus()
 }

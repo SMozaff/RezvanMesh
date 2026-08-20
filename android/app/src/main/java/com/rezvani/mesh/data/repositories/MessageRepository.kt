@@ -59,7 +59,7 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
             type = 0, // TEXT
             content = text,
             isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.SENDING else MessageStatus.DELIVERED
+            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
         )
         messageDao.insert(message)
         return messageId
@@ -84,7 +84,7 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
             type = 1, // VOICE
             content = content,
             isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.SENDING else MessageStatus.DELIVERED
+            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
         )
         messageDao.insert(message)
         return messageId
@@ -111,7 +111,7 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
             type = 2, // FILE_METADATA
             content = content,
             isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.SENDING else MessageStatus.DELIVERED
+            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
         )
         messageDao.insert(message)
         return messageId

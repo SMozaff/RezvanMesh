@@ -8,7 +8,10 @@ import androidx.lifecycle.viewModelScope
 import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.entities.MessageEntity
+import com.rezvani.mesh.data.entities.MessageStatus
 import com.rezvani.mesh.data.repositories.MessageRepository
+import com.rezvani.mesh.radio.SendResult
+import com.rezvani.mesh.radio.failureMessage
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -23,6 +26,9 @@ class ChannelDetailViewModel(application: Application) : AndroidViewModel(applic
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
 
+    private val _sendError = MutableStateFlow<String?>(null)
+    val sendError: StateFlow<String?> = _sendError.asStateFlow()
+
     /** Conversation key used for persistence -- must match engine.rs's 0x06
      * handler and MeshServiceConnection.addReceivedMessage's convention. */
     private fun conversationId(channelId: Int) = "channel_$channelId"
@@ -35,18 +41,30 @@ class ChannelDetailViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun clearSendError() {
+        _sendError.value = null
+    }
+
     fun sendMessage(channelId: Int, text: String) {
         viewModelScope.launch {
+            if (_isSending.value) return@launch
             _isSending.value = true
+            _sendError.value = null
             try {
-                // 1. Persist OUR message locally so it shows in the chat immediately.
-                messageRepo.insertTextMessage(
+                val id = messageRepo.insertTextMessage(
                     conversationId = conversationId(channelId),
                     text = text,
                     isOutgoing = true
                 )
-                // 2. Hand off to the radio to encrypt (sender-key) + broadcast.
-                MeshServiceConnection.activeService?.sendChannelMessage(channelId, text.toByteArray())
+                val result = MeshServiceConnection.activeService
+                    ?.sendChannelMessage(channelId, text.toByteArray())
+                    ?: SendResult.NotReady
+                if (result !is SendResult.Queued) {
+                    messageRepo.updateStatus(id, MessageStatus.FAILED)
+                    _sendError.value = result.failureMessage()
+                }
+            } catch (e: Exception) {
+                _sendError.value = e.message ?: "Channel message could not be queued"
             } finally {
                 _isSending.value = false
             }

@@ -42,6 +42,8 @@ class RadioControllerImpl(private val context: Context) : RadioController {
 
     private val bleGattMap = ConcurrentHashMap<String, BluetoothGatt>()
     private val bleSenderMap = ConcurrentHashMap<String, BlePacketSender>()
+    private val negotiatedMtuByMac = ConcurrentHashMap<String, Int>()
+    private val gattReassembler = BleReassembler()
     private val cachedRssiMap = ConcurrentHashMap<String, Int>()
     private val nodeIdToMac = ConcurrentHashMap<String, String>()
 
@@ -544,9 +546,14 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         ) {
             if (characteristic.uuid == MESH_CHARACTERISTIC_WRITE_UUID) {
                 DiagLogger.ble("GATT write rx", "addr" to device.address.takeLast(5), "len" to value.size.toString())
-                radioService?.onPacketReceived(value, cachedRssiMap[device.address] ?: -100)
+                // A logical mesh packet may arrive in several GATT writes. The
+                // reassembler returns null while it waits for more fragments.
+                val packet = gattReassembler.offer(device.address, value)
                 if (responseNeeded) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                }
+                if (packet != null) {
+                    radioService?.onPacketReceived(packet, cachedRssiMap[device.address] ?: -100)
                 }
             }
         }
@@ -568,45 +575,53 @@ class RadioControllerImpl(private val context: Context) : RadioController {
             return false
         }
         DiagLogger.ble("GATT write tx", "peer" to peerMacAddress.takeLast(5), "len" to data.size.toString())
-        sender.send(data)
-        return true
+        return sender.send(data)
     }
 
     override fun getMacForNodeId(nodeIdHex: String): String? = nodeIdToMac[nodeIdHex]
 
-    override fun sendToNodeId(nodeIdHex: String, data: ByteArray): Boolean {
+    override fun sendToNodeId(nodeIdHex: String, data: ByteArray): SendResult {
         val mac = nodeIdToMac[nodeIdHex]
         if (mac == null) {
-            DiagLogger.ble("sendToNodeId: peer $nodeIdHex not yet discovered, dropping")
-            return false
+            DiagLogger.ble("sendToNodeId: peer $nodeIdHex not yet discovered")
+            return SendResult.NoReachablePeer
         }
 
         val sender = bleSenderMap[mac]
         if (sender != null) {
-            DiagLogger.ble("GATT write tx (direct)", "peer" to mac.takeLast(5), "len" to data.size.toString())
-            sender.send(data)
-            return true
+            DiagLogger.ble("GATT queue tx (direct)", "peer" to mac.takeLast(5), "len" to data.size.toString())
+            return if (sender.send(data)) SendResult.Queued(peerCount = 1)
+            else SendResult.Failed("Local radio queue rejected the packet")
         }
 
-        // No live sender yet: queue the packet and make sure a GATT
-        // connection is (or gets) established, so onServicesDiscovered's
-        // flush picks this up once the sender becomes ready.
+        // A discovered peer can be queued while its GATT connection is being
+        // established. This is a local queue acknowledgement, not delivery.
         DiagLogger.ble("sendToNodeId: queuing for $nodeIdHex (${mac.takeLast(5)}), no sender yet")
         pendingPacketsByMac.getOrPut(mac) { mutableListOf() }.add(data)
-        connectToPeer(mac)
-        return true
+        return if (connectToPeer(mac)) SendResult.Queued(peerCount = 1)
+        else {
+            pendingPacketsByMac[mac]?.remove(data)
+            SendResult.Failed("Could not open a radio connection to the peer")
+        }
     }
 
     override fun disconnectPeer(peerMacAddress: String) {
         bleGattMap.remove(peerMacAddress)?.close()
         bleSenderMap.remove(peerMacAddress)?.close()
+        negotiatedMtuByMac.remove(peerMacAddress)
         pendingPacketsByMac.remove(peerMacAddress)
     }
 
-    override fun sendBroadcastPacket(data: ByteArray) {
-        bleSenderMap.keys.forEach { peer ->
-            sendBlePacket(peer, data)
+    override fun sendBroadcastPacket(data: ByteArray): SendResult {
+        val senders = bleSenderMap.entries.toList()
+        if (senders.isEmpty()) return SendResult.NoReachablePeer
+        var accepted = 0
+        senders.forEach { (peer, sender) ->
+            DiagLogger.ble("GATT queue tx (broadcast)", "peer" to peer.takeLast(5), "len" to data.size.toString())
+            if (sender.send(data)) accepted++
         }
+        return if (accepted > 0) SendResult.Queued(peerCount = accepted)
+        else SendResult.Failed("Local radio queue rejected the broadcast")
     }
 
     private val gattClientCallback = object : BluetoothGattCallback() {
@@ -614,6 +629,7 @@ class RadioControllerImpl(private val context: Context) : RadioController {
             if (gatt == null) return
             val addr = gatt.device.address
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                negotiatedMtuByMac.putIfAbsent(addr, 23)
                 DiagLogger.ble("GATT connected to $addr, requesting MTU")
                 // Negotiate a large MTU BEFORE discovering services. Olm pre-key
                 // messages (~200B) and KeyAnnouncements (90B) exceed the default
@@ -628,14 +644,18 @@ class RadioControllerImpl(private val context: Context) : RadioController {
                 DiagLogger.ble("GATT disconnected $addr")
                 bleSenderMap.remove(addr)?.close()
                 bleGattMap.remove(addr)?.close()
+                negotiatedMtuByMac.remove(addr)
                 pendingPacketsByMac.remove(addr)
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
             if (gatt == null) return
-            DiagLogger.ble("GATT MTU negotiated: $mtu (status=$status) for ${gatt.device.address}")
-            // Proceed to discovery regardless of status; discovery works at any MTU.
+            val resolvedMtu = if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23
+            negotiatedMtuByMac[gatt.device.address] = resolvedMtu
+            DiagLogger.ble("GATT MTU negotiated: $resolvedMtu (status=$status) for ${gatt.device.address}")
+            // Proceed to discovery regardless of status; fragmentation falls
+            // back to the default ATT MTU when negotiation failed.
             gatt.discoverServices()
         }
 
@@ -643,7 +663,7 @@ class RadioControllerImpl(private val context: Context) : RadioController {
             if (gatt == null || status != BluetoothGatt.GATT_SUCCESS) return
             val service = gatt.getService(MESH_SERVICE_UUID) ?: return
             val writeChar = service.getCharacteristic(MESH_CHARACTERISTIC_WRITE_UUID) ?: return
-            val sender = BlePacketSender(gatt)
+            val sender = BlePacketSender(gatt, negotiatedMtuByMac[gatt.device.address] ?: 23)
             sender.setCharacteristic(writeChar)
             bleSenderMap[gatt.device.address] = sender
             DiagLogger.ble("GATT service discovered, sender ready for ${gatt.device.address}")

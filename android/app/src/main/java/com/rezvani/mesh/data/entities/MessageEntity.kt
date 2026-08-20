@@ -13,11 +13,15 @@ data class MessageEntity(
     val type: Int,                  // MessageType value: 0=TEXT, 1=VOICE, 2=FILE_METADATA, 3=FILE_CHUNK
     val content: String,            // Text content or file path
     val isOutgoing: Boolean,
-    val status: Int                 // 0=SENDING, 1=SENT, 2=DELIVERED, 3=READ, 4=FAILED
+        val status: Int                 // 0=QUEUED, 1=SENT, 2=DELIVERED, 3=READ, 4=FAILED
 )
 
+/** Persistent lifecycle values. `SENT` is reserved for a future verified
+ * transport acknowledgement; the current stack uses QUEUED or FAILED. */
 object MessageStatus {
-    const val SENDING = 0
+    const val QUEUED = 0
+    @Deprecated("Use QUEUED to avoid implying radio transmission")
+    const val SENDING = QUEUED
     const val SENT = 1
     const val DELIVERED = 2
     const val READ = 3

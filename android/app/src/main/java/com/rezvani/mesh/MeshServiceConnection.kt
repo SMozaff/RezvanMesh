@@ -10,6 +10,7 @@ import android.app.Application
 import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.repositories.MessageRepository
 import com.rezvani.mesh.radio.RezvanRadioService
+import com.rezvani.mesh.radio.SendResult
 import com.rezvani.mesh.rust.DecryptedMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,28 +37,39 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
         val batteryLevel   = MutableStateFlow(100)
         val isCharging     = MutableStateFlow(false)
         val isServiceConnected = MutableStateFlow(false)
+        val activeServiceFlow = MutableStateFlow<RezvanRadioService?>(null)
+        val ownNodeId = MutableStateFlow<ByteArray?>(null)
         val meshCorePtr = MutableStateFlow<Long?>(null)
         var activeService: RezvanRadioService? = null
             private set
+        private var activeConnection: MeshServiceConnection? = null
+
+        fun registerConnection(connection: MeshServiceConnection) {
+            activeConnection = connection
+            activeService?.setConnection(connection)
+        }
 
         fun onServiceConnected(service: RezvanRadioService) {
             activeService = service
+            activeServiceFlow.value = service
+            activeConnection?.let(service::setConnection)
             isServiceConnected.value = true
         }
 
         fun onServiceDisconnected() {
             activeService = null
+            activeServiceFlow.value = null
+            // Keep the UI bridge for automatic service reconnects.
+            ownNodeId.value = null
             isServiceConnected.value = false
         }
     }
 
-    fun sendTextMessage(peerNodeId: ByteArray, text: String) {
-        activeService?.sendMessage(peerNodeId, text.toByteArray())
-    }
+    suspend fun sendTextMessage(peerNodeId: ByteArray, text: String): SendResult =
+        activeService?.sendMessage(peerNodeId, text.toByteArray()) ?: SendResult.NotReady
 
-    fun sendEmergencyBroadcast(message: String) {
-        activeService?.sendBroadcast(message.toByteArray())
-    }
+    suspend fun sendEmergencyBroadcast(message: String): SendResult =
+        activeService?.sendBroadcast(message.toByteArray()) ?: SendResult.NotReady
 
     fun addReceivedMessage(msg: DecryptedMessage) {
         // 1. Keep in-memory flow for live UI updates this session
@@ -101,12 +113,15 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
         val binder = service as? RezvanRadioService.LocalBinder
         activeService = binder?.getService()
         activeService?.setConnection(this)
-        isServiceConnected.value = true
+        activeConnection = this
+        activeServiceFlow.value = activeService
+        isServiceConnected.value = activeService != null
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
         activeService?.setConnection(null)
         activeService = null
+        activeServiceFlow.value = null
         isServiceConnected.value = false
     }
 }

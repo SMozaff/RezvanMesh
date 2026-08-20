@@ -5,18 +5,24 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.util.Log
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Manages a queue of outgoing BLE packets for a single connected GATT device.
- * Handles characteristic write with response and automatic retries.
+ * Manages logical-packet transmission for one connected GATT peer.
  *
- * Each instance is associated with a specific peer's GATT connection.
+ * Packets that exceed the negotiated ATT payload are fragmented before they
+ * enter the write queue. The matching [BleReassembler] is used on the GATT
+ * server receive path, so an oversized mesh packet is never passed through as
+ * one invalid characteristic write.
  */
-class BlePacketSender(private val gatt: BluetoothGatt) {
-
+class BlePacketSender(
+    private val gatt: BluetoothGatt,
+    private val negotiatedMtu: Int = DEFAULT_MTU
+) {
     private val queue = LinkedBlockingQueue<ByteArray>()
     private val isSending = AtomicBoolean(false)
     private val isClosed = AtomicBoolean(false)
+    private val nextMessageId = AtomicInteger(0)
 
     @Volatile
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
@@ -27,12 +33,10 @@ class BlePacketSender(private val gatt: BluetoothGatt) {
         private const val TAG = "BlePacketSender"
         private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 200L
+        private const val DEFAULT_MTU = 23
+        private const val ATT_OVERHEAD = 3
     }
 
-    /**
-     * Sets the characteristic to use for writing data.
-     * Called when GATT services are discovered.
-     */
     fun setCharacteristic(characteristic: BluetoothGattCharacteristic?) {
         synchronized(lock) {
             this.writeCharacteristic = characteristic
@@ -43,48 +47,47 @@ class BlePacketSender(private val gatt: BluetoothGatt) {
     }
 
     /**
-     * Enqueues a packet for transmission.
-     *
-     * @param data Raw packet data to send.
+     * Queues a logical mesh packet. `true` means the local GATT queue accepted
+     * it; it does not mean the peer received it.
      */
-    fun send(data: ByteArray) {
-        if (isClosed.get()) {
-            Log.w(TAG, "Sender closed, dropping packet")
-            return
+    fun send(data: ByteArray): Boolean {
+        if (isClosed.get() || data.isEmpty()) {
+            Log.w(TAG, if (isClosed.get()) "Sender closed, dropping packet" else "Empty packet, dropping")
+            return false
         }
 
-        queue.put(data)
+        val maxWholeWrite = (negotiatedMtu - ATT_OVERHEAD).coerceAtLeast(20)
+        val writes = if (data.size <= maxWholeWrite) {
+            listOf(data)
+        } else {
+            BleFragmenter.fragment(
+                packet = data,
+                mtu = negotiatedMtu,
+                msgId = nextMessageId.getAndUpdate { (it + 1) and 0xFFFF }
+            )
+        }
+        writes.forEach(queue::put)
         processQueue()
+        return true
     }
 
-    /**
-     * Callback when a characteristic write completes.
-     *
-     * @param success true if write succeeded, false otherwise.
-     */
     fun onWriteComplete(success: Boolean) {
         if (success) {
             synchronized(lock) {
                 isSending.set(false)
-                // Notify waiting threads (if any retry logic)
                 lock.notifyAll()
             }
             processQueue()
         } else {
             Log.w(TAG, "Write failed, will retry")
-            // Retry will be handled by the queue processing
             synchronized(lock) {
                 isSending.set(false)
             }
-            // Delay before retry
             Thread.sleep(RETRY_DELAY_MS)
             processQueue()
         }
     }
 
-    /**
-     * Closes this sender and clears the queue.
-     */
     fun close() {
         isClosed.set(true)
         queue.clear()
@@ -96,41 +99,32 @@ class BlePacketSender(private val gatt: BluetoothGatt) {
 
     private fun processQueue() {
         synchronized(lock) {
-            if (isSending.get() || isClosed.get()) {
-                return
-            }
+            if (isSending.get() || isClosed.get()) return
 
             val packet = queue.poll() ?: return
-
             val characteristic = writeCharacteristic
             if (characteristic == null) {
-                // Characteristic not ready yet; put back and wait
                 queue.offer(packet)
                 return
             }
 
             isSending.set(true)
-
             try {
                 var retries = 0
                 var writeSuccess = false
-
                 while (retries < MAX_RETRIES && !writeSuccess && !isClosed.get()) {
                     characteristic.value = packet
                     characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
 
-                    val success = gatt.writeCharacteristic(characteristic)
-                    if (!success) {
+                    val started = gatt.writeCharacteristic(characteristic)
+                    if (!started) {
                         retries++
                         Log.w(TAG, "writeCharacteristic returned false, retry $retries/$MAX_RETRIES")
                         Thread.sleep(RETRY_DELAY_MS)
                         continue
                     }
 
-                    // Wait for onWriteComplete callback
                     lock.wait(3000)
-
-                    // If isSending is still true, write may have timed out
                     if (isSending.get()) {
                         retries++
                         Log.w(TAG, "Write timeout, retry $retries/$MAX_RETRIES")
@@ -141,7 +135,6 @@ class BlePacketSender(private val gatt: BluetoothGatt) {
 
                 if (!writeSuccess && !isClosed.get()) {
                     Log.e(TAG, "Failed to send packet after $MAX_RETRIES retries")
-                    // Packet is dropped; could optionally requeue for later
                 }
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()

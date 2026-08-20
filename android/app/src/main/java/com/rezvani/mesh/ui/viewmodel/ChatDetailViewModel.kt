@@ -8,7 +8,10 @@ import androidx.lifecycle.viewModelScope
 import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.entities.MessageEntity
+import com.rezvani.mesh.data.entities.MessageStatus
 import com.rezvani.mesh.data.repositories.MessageRepository
+import com.rezvani.mesh.radio.SendResult
+import com.rezvani.mesh.radio.failureMessage
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -23,6 +26,9 @@ class ChatDetailViewModel(application: Application) : AndroidViewModel(applicati
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
 
+    private val _sendError = MutableStateFlow<String?>(null)
+    val sendError: StateFlow<String?> = _sendError.asStateFlow()
+
     fun loadMessages(conversationId: String) {
         viewModelScope.launch {
             messageRepo.getMessages(conversationId).collect {
@@ -31,24 +37,42 @@ class ChatDetailViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun clearSendError() {
+        _sendError.value = null
+    }
+
+    /**
+     * Persists the local message first for offline-first continuity, then
+     * marks it failed if the local mesh cannot accept it. A queued message is
+     * intentionally not promoted to sent or delivered.
+     */
     fun sendMessage(conversationId: String, text: String) {
         viewModelScope.launch {
+            if (_isSending.value) return@launch
             _isSending.value = true
+            _sendError.value = null
             try {
                 val recipient = hexToBytes(conversationId)
-                if (recipient != null) {
-                    // 1. Persist OUR message locally so it shows in the chat immediately.
-                    //    conversationId here is the recipient's node-id hex (16 chars),
-                    //    the same key the receiver will use (their senderId == our node id,
-                    //    our recipient == their node id -> both sides key by the OTHER party).
-                    messageRepo.insertTextMessage(
-                        conversationId = conversationId,
-                        text = text,
-                        isOutgoing = true
-                    )
-                    // 2. Hand off to the radio to encrypt + transmit.
-                    MeshServiceConnection.activeService?.sendMessage(recipient, text.toByteArray())
+                if (recipient == null || recipient.size != 8) {
+                    _sendError.value = "This contact has an invalid mesh ID. Message was not queued."
+                    return@launch
                 }
+
+                val messageId = messageRepo.insertTextMessage(
+                    conversationId = conversationId,
+                    text = text,
+                    isOutgoing = true
+                )
+                val result = MeshServiceConnection.activeService
+                    ?.sendMessage(recipient, text.toByteArray())
+                    ?: SendResult.NotReady
+
+                if (result !is SendResult.Queued) {
+                    messageRepo.updateStatus(messageId, MessageStatus.FAILED)
+                    _sendError.value = result.failureMessage()
+                }
+            } catch (e: Exception) {
+                _sendError.value = e.message ?: "Message could not be queued"
             } finally {
                 _isSending.value = false
             }
@@ -56,13 +80,9 @@ class ChatDetailViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun hexToBytes(hex: String): ByteArray? {
-        if (hex.length % 2 != 0) return null
-        return try {
-            ByteArray(hex.length / 2) {
-                hex.substring(it * 2, it * 2 + 2).toInt(16).toByte()
-            }
-        } catch (e: Exception) {
-            null
+        if (!hex.matches(Regex("^[0-9A-Fa-f]{16}$"))) return null
+        return ByteArray(hex.length / 2) {
+            hex.substring(it * 2, it * 2 + 2).toInt(16).toByte()
         }
     }
 }

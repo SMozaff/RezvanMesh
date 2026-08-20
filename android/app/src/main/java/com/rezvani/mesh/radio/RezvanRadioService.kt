@@ -138,6 +138,7 @@ class RezvanRadioService : Service() {
             // SHA-256(seed), which is a *different* value and silently broke
             // self-loopback detection (see security audit finding #8).
             ownNodeId = com.rezvani.mesh.MeshCore.nativeGetNodeId(enginePtr)
+            MeshServiceConnection.ownNodeId.value = ownNodeId?.copyOf()
             if (ownNodeId != null) {
                 radioController?.setOwnNodeId(ownNodeId!!)
             }
@@ -259,65 +260,49 @@ class RezvanRadioService : Service() {
         meshConnection = conn
     }
 
-    fun sendMessage(recipient: ByteArray, plaintext: ByteArray) {
-        if (enginePtr == 0L) return
-        serviceScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    com.rezvani.mesh.MeshCore.nativeSendMessage(enginePtr, recipient, plaintext, 0)
-                }
-                // result is a serialized action envelope (same format as
-                // nativeTick/nativeProcessIncoming), NOT a raw wire packet --
-                // it must go through ActionDispatcher to be parsed and routed
-                // to the correct peer. Previously this was passed directly to
-                // sendBroadcastPacket(), which (a) sent the unparsed envelope
-                // bytes rather than the actual packet, and (b) broadcast to
-                // every connected peer instead of just the recipient.
-                if (result != null) {
-                    radioController?.let { ActionDispatcher.dispatch(result, it) }
-                }
-            } catch (e: Exception) {
-                DiagLogger.err("SERVICE", "Send error: ${e.message}", e)
-            }
+    /**
+     * Submits a direct message to the native engine and local radio queue.
+     * A successful result is intentionally limited to local queue acceptance;
+     * the current protocol does not prove remote delivery here.
+     */
+    suspend fun sendMessage(recipient: ByteArray, plaintext: ByteArray): SendResult {
+        if (enginePtr == 0L || radioController == null) return SendResult.NotReady
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                com.rezvani.mesh.MeshCore.nativeSendMessage(enginePtr, recipient, plaintext, 0)
+            } ?: return SendResult.Failed("Mesh engine did not create a message packet")
+            ActionDispatcher.dispatch(result, radioController!!)
+        } catch (e: Exception) {
+            DiagLogger.err("SERVICE", "Send error: ${e.message}", e)
+            SendResult.Failed(e.message ?: "Could not submit message to the mesh")
         }
     }
 
-    fun sendBroadcast(message: ByteArray) {
-        if (enginePtr == 0L) return
-        serviceScope.launch {
-            try {
-                // Previously called nativeSendMessage(enginePtr, ByteArray(8), message, 3)
-                // -- routing through the 1:1 Olm-encrypted direct-message path with an
-                // all-zero recipient, which has no established session and silently
-                // failed. nativeSendBroadcast calls the actual signed emergency-broadcast
-                // path (MeshEngine::send_broadcast, packet_type 0x03).
-                val result = withContext(Dispatchers.IO) {
-                    com.rezvani.mesh.MeshCore.nativeSendBroadcast(enginePtr, message)
-                }
-                if (result != null) {
-                    radioController?.let { ActionDispatcher.dispatch(result, it) }
-                }
-            } catch (e: Exception) {
-                DiagLogger.err("SERVICE", "Broadcast error: ${e.message}", e)
-            }
+    /** Submits a signed emergency broadcast to the local mesh transport. */
+    suspend fun sendBroadcast(message: ByteArray): SendResult {
+        if (enginePtr == 0L || radioController == null) return SendResult.NotReady
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                com.rezvani.mesh.MeshCore.nativeSendBroadcast(enginePtr, message)
+            } ?: return SendResult.Failed("Mesh engine did not create an emergency packet")
+            ActionDispatcher.dispatch(result, radioController!!)
+        } catch (e: Exception) {
+            DiagLogger.err("SERVICE", "Broadcast error: ${e.message}", e)
+            SendResult.Failed(e.message ?: "Could not submit emergency alert to the mesh")
         }
     }
 
-    fun sendChannelMessage(channelId: Int, message: ByteArray) {
-        if (enginePtr == 0L) return
-        serviceScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    com.rezvani.mesh.MeshCore.nativeSendChannelMessage(enginePtr, channelId, message)
-                }
-                if (result != null) {
-                    radioController?.let { ActionDispatcher.dispatch(result, it) }
-                } else {
-                    DiagLogger.ble("sendChannelMessage: no key for channel $channelId, not sent")
-                }
-            } catch (e: Exception) {
-                DiagLogger.err("SERVICE", "Channel send error: ${e.message}", e)
-            }
+    /** Submits a sender-key channel message to the local mesh transport. */
+    suspend fun sendChannelMessage(channelId: Int, message: ByteArray): SendResult {
+        if (enginePtr == 0L || radioController == null) return SendResult.NotReady
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                com.rezvani.mesh.MeshCore.nativeSendChannelMessage(enginePtr, channelId, message)
+            } ?: return SendResult.Failed("No channel key is available for this channel")
+            ActionDispatcher.dispatch(result, radioController!!)
+        } catch (e: Exception) {
+            DiagLogger.err("SERVICE", "Channel send error: ${e.message}", e)
+            SendResult.Failed(e.message ?: "Could not submit channel message to the mesh")
         }
     }
 
@@ -333,9 +318,14 @@ class RezvanRadioService : Service() {
         return com.rezvani.mesh.MeshCore.nativeSetChannelKey(enginePtr, channelId, key)
     }
 
-    fun sendVoiceBroadcast(packet: ByteArray) {
-        DiagLogger.ble("Voice broadcast sending, size=${packet.size}")
-        radioController?.sendBroadcastPacket(packet)
+    /**
+     * Voice transport is deliberately unavailable until the authenticated voice
+     * envelope and end-to-end receive path are implemented. Raw recordings
+     * must not be injected into the mesh packet transport.
+     */
+    suspend fun sendVoiceBroadcast(packet: ByteArray): SendResult {
+        DiagLogger.ble("Voice broadcast blocked pending transport verification, size=${packet.size}")
+        return SendResult.Failed("Voice broadcast is unavailable while transport verification is in progress")
     }
 
     fun getRadioController(): RadioControllerImpl? = radioController
@@ -363,6 +353,8 @@ class RezvanRadioService : Service() {
         if (enginePtr != 0L) {
             com.rezvani.mesh.MeshCore.nativeDestroy(enginePtr)
         }
+        MeshServiceConnection.ownNodeId.value = null
+        MeshServiceConnection.meshCorePtr.value = null
         radioController?.onDestroy()
         wakeLock?.release()
         DiagLogger.ble("Service destroyed")

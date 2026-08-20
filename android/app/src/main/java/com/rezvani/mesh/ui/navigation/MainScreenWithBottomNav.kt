@@ -35,7 +35,11 @@ private val tabs = listOf(
 fun MainScreenWithBottomNav() {
     val context = LocalContext.current
     val navController = rememberNavController()
-    val meshConnection = remember { MeshServiceConnection(context) }
+    val meshConnection = remember { MeshServiceConnection(context.applicationContext) }
+    DisposableEffect(meshConnection) {
+        MeshServiceConnection.registerConnection(meshConnection)
+        onDispose { }
+    }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
     val tabRoutes = remember { tabs.map { it.route } }

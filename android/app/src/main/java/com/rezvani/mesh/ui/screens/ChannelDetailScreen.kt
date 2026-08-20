@@ -37,6 +37,8 @@ fun ChannelDetailScreen(
 ) {
     val messages by viewModel.messages.collectAsState(initial = emptyList())
     val isSending by viewModel.isSending.collectAsState()
+    val sendError by viewModel.sendError.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var messageText by remember { mutableStateOf("") }
@@ -45,8 +47,15 @@ fun ChannelDetailScreen(
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(0)
     }
+    LaunchedEffect(sendError) {
+        sendError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearSendError()
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {

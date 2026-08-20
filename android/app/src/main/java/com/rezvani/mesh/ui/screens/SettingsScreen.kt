@@ -1,5 +1,6 @@
 package com.rezvani.mesh.ui.screens
 
+import android.app.Activity
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -181,15 +182,17 @@ fun SettingsScreen(
                 )
             }
 
-            // ---- Developer (always visible, clearly labelled) ----
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-            SettingsSection(title = "Developer") {
-                SettingsItem(
-                    icon = Icons.Default.Build,
-                    title = "Diagnostics",
-                    subtitle = "Self-tests, pipeline harness, and radio counters",
-                    onClick = { onNavigateToDiagnostics?.invoke() }
-                )
+            // ---- Developer (revealed after five version taps) ----
+            if (showDeveloperSection) {
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                SettingsSection(title = "Developer") {
+                    SettingsItem(
+                        icon = Icons.Default.Build,
+                        title = "Diagnostics",
+                        subtitle = "Self-tests, pipeline harness, and radio counters",
+                        onClick = { onNavigateToDiagnostics?.invoke() }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -217,6 +220,9 @@ fun SettingsScreen(
                                     viewModel.setLanguage(code)
                                     LocaleHelper.saveLanguage(context, code)
                                     showLanguageDialog = false
+                                    // Recreate the activity so attachBaseContext applies
+                                    // locale direction and resources immediately.
+                                    (context as? Activity)?.recreate()
                                 }
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically

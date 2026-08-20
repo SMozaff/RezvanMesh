@@ -35,6 +35,8 @@ fun ChatDetailScreen(
 ) {
     val messages by viewModel.messages.collectAsState(initial = emptyList())
     val isSending by viewModel.isSending.collectAsState()
+    val sendError by viewModel.sendError.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var messageText by remember { mutableStateOf("") }
@@ -43,8 +45,15 @@ fun ChatDetailScreen(
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(0)
     }
+    LaunchedEffect(sendError) {
+        sendError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearSendError()
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -191,10 +200,21 @@ fun MessageBubble(message: MessageEntity) {
 
 @Composable
 fun MessageStatusIndicator(status: Int) {
-    val (icon, tint) = when (status) {
-        3    -> Icons.Default.DoneAll to MaterialTheme.colorScheme.primary
-        4    -> Icons.Default.Warning to MaterialTheme.colorScheme.error
-        else -> Icons.Default.Check   to MaterialTheme.colorScheme.outline
+    if (status == com.rezvani.mesh.data.entities.MessageStatus.QUEUED) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 1.5.dp,
+            color = MaterialTheme.colorScheme.outline
+        )
+        return
     }
-    Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(14.dp), tint = tint)
+    val (icon, tint, description) = when (status) {
+        com.rezvani.mesh.data.entities.MessageStatus.DELIVERED,
+        com.rezvani.mesh.data.entities.MessageStatus.READ ->
+            Triple(Icons.Default.DoneAll, MaterialTheme.colorScheme.primary, "Delivered")
+        com.rezvani.mesh.data.entities.MessageStatus.FAILED ->
+            Triple(Icons.Default.Warning, MaterialTheme.colorScheme.error, "Failed to queue")
+        else -> Triple(Icons.Default.Check, MaterialTheme.colorScheme.outline, "Sent")
+    }
+    Icon(imageVector = icon, contentDescription = description, modifier = Modifier.size(14.dp), tint = tint)
 }
