@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -230,6 +232,12 @@ fun BatteryStatusChip(level: Int, charging: Boolean) {
 
 @Composable
 private fun MeshHero(active: Boolean, peerCount: Int) {
+    val statusDescription = if (active) {
+        if (peerCount == 1) stringResource(R.string.peer_found)
+        else stringResource(R.string.peers_found, peerCount)
+    } else {
+        stringResource(R.string.scanning)
+    }
     // Scan rings: faster + brighter when peers found
     val ringSpeed = if (active) 1400 else 2200
     val ringAlpha = if (active) 0.55f else 0.30f
@@ -256,7 +264,11 @@ private fun MeshHero(active: Boolean, peerCount: Int) {
     val centerColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
     val edgeColor = MaterialTheme.colorScheme.outline
 
-    Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = statusDescription },
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
             Canvas(modifier = Modifier.fillMaxSize()) {

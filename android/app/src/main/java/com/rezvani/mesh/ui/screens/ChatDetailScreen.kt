@@ -17,6 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.R
@@ -202,7 +204,7 @@ fun MessageBubble(message: MessageEntity, onRetry: (() -> Unit)? = null) {
                         if (message.status == com.rezvani.mesh.data.entities.MessageStatus.FAILED && onRetry != null) {
                             IconButton(
                                 onClick = onRetry,
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
@@ -223,7 +225,9 @@ fun MessageBubble(message: MessageEntity, onRetry: (() -> Unit)? = null) {
 fun MessageStatusIndicator(status: Int) {
     if (status == com.rezvani.mesh.data.entities.MessageStatus.QUEUED) {
         CircularProgressIndicator(
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier
+                .size(14.dp)
+                .semantics { contentDescription = stringResource(R.string.status_queued) },
             strokeWidth = 1.5.dp,
             color = MaterialTheme.colorScheme.outline
         )
