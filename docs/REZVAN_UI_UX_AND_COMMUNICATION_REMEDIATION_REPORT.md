@@ -3,7 +3,8 @@
 **Baseline commit:** `887be78fb23f1149ea2d4eb39a30aec0e40073de`  
 **Remediation branch:** `fix/communication-integrity-uiux`  
 **Remediation implementation commit:** `9b7e564aa902c6e25fc01c41bc95dc14c6194499`  
-**Report status:** Implementation and local verification record  
+**Follow-up remediation head:** `496bb1fcd61c3cc7feb5cd316bf00d2eee3798fb`
+**Report status:** Implementation and GitHub Actions verification record
 **Prepared by:** Manus AI
 
 > **Safety position:** The remediation treats local queue acceptance as a local fact only. It does **not** represent a remote radio write, protocol acknowledgement, or recipient delivery. Voice/PTT remains deliberately unavailable pending a complete authenticated protocol and physical-device validation.
@@ -178,6 +179,23 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/home/ubuntu/android-sdk ANDROID_SDK_ROOT=/home/ubuntu/android-sdk bash ./gradlew --no-daemon --max-workers=1 -Dorg.gradle.jvmargs='-Xmx1024m -XX:MaxMetaspaceSize=256m' :android:app:compileDebugKotlin --stacktrace` | **PASS** — Android debug Kotlin compilation succeeded. |
 | `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/home/ubuntu/android-sdk ANDROID_SDK_ROOT=/home/ubuntu/android-sdk bash ./gradlew --no-daemon --max-workers=1 -Dorg.gradle.jvmargs='-Xmx1024m -XX:MaxMetaspaceSize=256m' :android:app:testDebugUnitTest --stacktrace` | **PASS** — Debug unit tests succeeded, including `BleFragmenterTest`. |
 | `cargo test --workspace` | **NOT RUN** — Rust toolchain was not available in the sandbox. |
+
+## Post-Merge Follow-up Remediation
+
+The following post-merge commits close additional static audit findings while preserving the safety boundary that Voice/PTT remains unavailable:
+
+| Commit | Follow-up remediation | Verification |
+|---|---|---|
+| `5929a33` | Deleted dormant legacy Voice and non-authoritative Messages routes, added actionable QR channel-join failures, and made Android JVM unit tests part of CI. | GitHub Actions: Rust tests, Android JVM tests, debug APK build passed. |
+| `c66c0a6` | Added duplicate-free retries for failed direct and channel messages and a persistent battery-reliability warning. | GitHub Actions passed. |
+| `21e679b` | Replaced placeholder peer rows with live abbreviated node IDs, RSSI, and GATT sender readiness. Bluetooth MAC addresses remain inside the transport layer. | GitHub Actions passed. |
+| `f0a7aa6`, `6f5e535`, `d98a944` | Moved active Network, message-status, and Contacts copy into Android resources; corrected Android resource escaping discovered by CI. | GitHub Actions passed after correction. |
+| `dd5282d` | Made raw channel-key display an explicit advanced fallback; QR sharing remains the primary invite route. | GitHub Actions passed. |
+| `f3882a1`, `496bb1f` | Added queued-state semantics, a 48 dp retry target, and a semantic Network visualization summary; corrected the Compose semantics compilation issue discovered by CI. | GitHub Actions passed after correction. |
+
+> **Latest automated validation:** [GitHub Actions run 32414658887](https://github.com/SMozaff/RezvanMesh/actions/runs/32414658887) completed successfully for `496bb1f`. It ran the Rust test jobs, Android JVM unit tests, and a debug APK build.
+
+The current protocol still provides only a truthful **local queue acceptance** result. Protocol-backed acknowledgement, delivery/read states, an authenticated Voice receive pipeline, a trust model, full localization and RTL review, and physical-device BLE validation remain outstanding. These are not represented as complete by this report.
 
 ## Remaining Risks
 
