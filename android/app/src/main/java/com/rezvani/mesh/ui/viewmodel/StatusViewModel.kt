@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rezvani.mesh.MeshCore
 import com.rezvani.mesh.MeshServiceConnection
+import com.rezvani.mesh.radio.PeerSnapshot
 import com.rezvani.mesh.radio.RadioControllerImpl
 import com.rezvani.mesh.utils.DiagLogger
 import kotlinx.coroutines.delay
@@ -19,7 +20,14 @@ data class StatusUiState(
     val batteryLevel: Int = 100,
     val isCharging: Boolean = false,
     val logLines: List<String> = emptyList(),
-    val radioSnapshot: Map<String, Long> = emptyMap()
+    val radioSnapshot: Map<String, Long> = emptyMap(),
+    val peers: List<PeerUiModel> = emptyList()
+)
+
+data class PeerUiModel(
+    val nodeIdHex: String,
+    val rssi: Int?,
+    val connected: Boolean
 )
 
 class StatusViewModel : ViewModel() {
@@ -28,6 +36,7 @@ class StatusViewModel : ViewModel() {
     val uiState: StateFlow<StatusUiState> = _uiState.asStateFlow()
 
     private val _radioState = MutableStateFlow<Map<String, Long>>(emptyMap())
+    private val _peerState = MutableStateFlow<List<PeerUiModel>>(emptyList())
 
     private var mockCounter = 0
 
@@ -43,7 +52,7 @@ class StatusViewModel : ViewModel() {
                 MeshServiceConnection.batteryLevel,
                 MeshServiceConnection.isCharging
             ) { values -> values }
-            combine(baseFlow, logFlow, _radioState) { base, logs, radio ->
+            combine(baseFlow, logFlow, _radioState, _peerState) { base, logs, radio, peers ->
                 val count     = base[0] as Int
                 val strength  = base[1] as String
                 val connected = base[2] as Boolean
@@ -64,7 +73,8 @@ class StatusViewModel : ViewModel() {
                     batteryLevel = battery,
                     isCharging = charging,
                     logLines = logs,
-                    radioSnapshot = radio
+                    radioSnapshot = radio,
+                    peers = peers
                 )
             }.collect { _uiState.value = it }
         }
@@ -78,11 +88,21 @@ class StatusViewModel : ViewModel() {
                         ?.getRadioController() as? RadioControllerImpl
                     if (ctrl != null) {
                         _radioState.value = ctrl.snapshotCounters()
+                        _peerState.value = ctrl.snapshotPeers().map { it.toUiModel() }
+                    } else {
+                        _radioState.value = emptyMap()
+                        _peerState.value = emptyList()
                     }
                 } catch (_: Exception) { }
             }
         }
     }
+
+    private fun PeerSnapshot.toUiModel() = PeerUiModel(
+        nodeIdHex = nodeIdHex,
+        rssi = rssi,
+        connected = connected
+    )
 
     fun injectMockPeer() {
         viewModelScope.launch {

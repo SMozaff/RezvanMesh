@@ -30,6 +30,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+data class PeerSnapshot(
+    val nodeIdHex: String,
+    val rssi: Int?,
+    val connected: Boolean
+)
+
 class RadioControllerImpl(private val context: Context) : RadioController {
 
     private val bluetoothManager =
@@ -168,6 +174,19 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         "scanning" to (if (isScanning.get()) 1L else 0L),
         "advertising" to (if (isAdvertising.get()) 1L else 0L)
     )
+
+    /** A UI-safe view of observed peers. Bluetooth MAC addresses stay inside
+     * the transport layer; the UI receives only an abbreviated mesh identity,
+     * latest RSSI, and whether a GATT sender is ready. */
+    fun snapshotPeers(): List<PeerSnapshot> = nodeIdToMac.entries
+        .map { (nodeIdHex, mac) ->
+            PeerSnapshot(
+                nodeIdHex = nodeIdHex,
+                rssi = cachedRssiMap[mac],
+                connected = bleSenderMap.containsKey(mac)
+            )
+        }
+        .sortedBy { it.nodeIdHex }
 
     init {
         DiagLogger.ble(

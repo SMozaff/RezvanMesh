@@ -26,6 +26,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.MeshServiceConnection
+import com.rezvani.mesh.ui.viewmodel.PeerUiModel
 import com.rezvani.mesh.ui.viewmodel.StatusViewModel
 import com.rezvani.mesh.utils.BarcodeUtils
 import kotlin.math.cos
@@ -90,7 +91,7 @@ fun NetworkScreen(
                 Text("Nearby", style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface)
             }
-            if (uiState.nodeCount == 0) {
+            if (uiState.peers.isEmpty()) {
                 item {
                     Text(
                         "No devices nearby yet. Keep the app open - discovery runs in the background.",
@@ -99,8 +100,8 @@ fun NetworkScreen(
                     )
                 }
             } else {
-                items(uiState.nodeCount) { i ->
-                    PeerRow(index = i, signal = uiState.signalStrength)
+                items(uiState.peers, key = { it.nodeIdHex }) { peer ->
+                    PeerRow(peer = peer)
                 }
             }
             item {
@@ -333,10 +334,13 @@ private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, s
 }
 
 @Composable
-private fun PeerRow(index: Int, signal: String) {
+private fun PeerRow(peer: PeerUiModel) {
+    val abbreviatedId = "${peer.nodeIdHex.take(4)}…${peer.nodeIdHex.takeLast(4)}"
+    val connectionLabel = if (peer.connected) "Connected" else "Nearby — connecting"
+    val signal = peer.rssi?.let { "$it dBm" } ?: "--"
     ListItem(
-        headlineContent = { Text("Peer ${index + 1}") },
-        supportingContent = { Text("Connected", style = MaterialTheme.typography.bodySmall,
+        headlineContent = { Text("Peer $abbreviatedId") },
+        supportingContent = { Text(connectionLabel, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingContent = {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
