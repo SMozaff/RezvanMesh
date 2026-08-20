@@ -2,7 +2,7 @@
 
 **Baseline commit:** `887be78fb23f1149ea2d4eb39a30aec0e40073de`  
 **Remediation branch:** `fix/communication-integrity-uiux`  
-**Final commit:** Pending verification and commit  
+**Remediation implementation commit:** `9b7e564aa902c6e25fc01c41bc95dc14c6194499`  
 **Report status:** Implementation and local verification record  
 **Prepared by:** Manus AI
 
@@ -47,7 +47,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | Callers can expose local queue acceptance or a specific non-success reason. `Queued` is documented as local-only and never delivery. |
 | Evidence | `SendResult.kt`; send contract call-chain updates. [1] [2] [3] |
 | Tests | **STATICALLY VERIFIED**; Android debug sources compile. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | The protocol does not currently emit a durable remote acknowledgement; `Acknowledged` and `Delivered` are intentionally not fabricated. |
 
 ### C02 — Emergency transmission semantics
@@ -60,7 +60,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | The UI never calls queued local work “delivered” or “sent.” |
 | Evidence | `EmergencyViewModel.kt` and `EmergencyScreen.kt`. [9] |
 | Tests | **STATICALLY VERIFIED**; Android debug sources compile. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | A local queue can still fail after acceptance; no remote acknowledgement exists. Physical device testing is mandatory before release. |
 
 ### C03 — BLE fragmentation and reassembly
@@ -73,7 +73,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | Oversized logical packets are fragmented for production GATT transmission. Inbound fragment sequences are reassembled before mesh parsing. |
 | Evidence | `BlePacketSender.kt`, `BleFragmenter.kt`, and `RadioControllerImpl.kt`. [4] [5] [6] |
 | Tests | **UNIT TESTED** for large/default-MTU round trip, out-of-order sequence, duplicate handling, passthrough, max payload, and max fragment count. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | Android GATT behavior, MTU negotiation, disconnect handling, and real peer interoperability require physical-device tests. |
 
 ### C04 — Voice transport
@@ -86,7 +86,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | The product no longer implies that emergency voice broadcasting is available. |
 | Evidence | `RezvanRadioService.kt` and `VoiceScreen.kt`. [7] [8] |
 | Tests | **STATICALLY VERIFIED**; Android debug sources compile. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | Voice is intentionally disabled. A future implementation must add authenticated envelope, fragmentation, receive validation, storage/playback policy, replay protections where required, and device tests before exposure. |
 
 ### C05 — Direct and channel message lifecycle
@@ -99,7 +99,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | UI and list use a consistent, conservative local lifecycle. |
 | Evidence | `MessageEntity.kt`, `MessageRepository.kt`, `ChatDetailViewModel.kt`, `ChannelDetailViewModel.kt`, `ChatsViewModel.kt`, and chat screens. [10] [11] [12] [13] |
 | Tests | **STATICALLY VERIFIED**; Android debug sources compile. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | There is no protocol-linked message ID or remote delivery acknowledgement. `SENT`, `DELIVERED`, and `READ` remain reserved for future verified signals. |
 
 ### C06 — Emergency Reception and service readiness
@@ -112,7 +112,7 @@ The Android debug sources compile and the debug unit-test task passes locally us
 | After | No visible setting implies an unavailable receive capability. QR readiness and service consumers observe canonical state reactively. |
 | Evidence | `VoiceScreen.kt`, `MeshServiceConnection.kt`, `MainScreenWithBottomNav.kt`, `NetworkScreen.kt`, and `ContactsScreen.kt`. [8] [14] [15] |
 | Tests | **STATICALLY VERIFIED**; Android debug sources compile. |
-| Commit | Pending final commit. |
+| Commit | `9b7e564aa902c6e25fc01c41bc95dc14c6194499` |
 | Remaining risk | Direct inbound-message behavior must be validated across Activity/service lifecycle changes on physical devices. |
 
 ## UI/UX Remediation
