@@ -79,7 +79,7 @@
     <string name="scan_qr">Scan QR</string>
     <string name="my_qr">My QR</string>
     <string name="add_contact_description">Add contact</string>
-    <string name="contacts_empty_hint">Scan a peer's QR code or tap +</string>
+    <string name="contacts_empty_hint">Scan a peer\'s QR code or tap +</string>
     <string name="delete_contacts">Delete Contacts</string>
     <string name="delete_contacts_confirmation">Remove %1$d contact(s)?</string>
     <string name="contact_name">Contact name</string>
@@ -91,7 +91,7 @@
     <string name="ok">OK</string>
     <string name="share_contact_qr">Share this QR code so others can add you.</string>
     <string name="open_chat">Open chat</string>
-    <string name="invalid_contact_qr">QR code doesn't contain a valid Rezvan node ID.\nScanned: &quot;%1$s&quot;</string>
+    <string name="invalid_contact_qr">QR code doesn\'t contain a valid Rezvan node ID.\nScanned: &quot;%1$s&quot;</string>
 
     <!-- Network -->
     <string name="my_mesh_id">My Mesh ID</string>
