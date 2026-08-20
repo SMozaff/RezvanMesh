@@ -139,7 +139,14 @@ fun ChannelDetailScreen(
                     items(messages, key = { it.id }) { message ->
                         // Reused directly from ChatDetailScreen.kt -- same
                         // MessageEntity shape, same bubble rendering.
-                        MessageBubble(message = message)
+                        MessageBubble(
+                            message = message,
+                            onRetry = if (!isSending) {
+                                { viewModel.retryMessage(message) }
+                            } else {
+                                null
+                            }
+                        )
                     }
                 }
             }

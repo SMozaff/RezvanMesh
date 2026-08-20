@@ -19,7 +19,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.ui.viewmodel.StatusViewModel
@@ -38,6 +42,7 @@ fun NetworkScreen(
     var showQrDialog by remember { mutableStateOf(false) }
     val ownNodeId by MeshServiceConnection.ownNodeId.collectAsState()
     val ownNodeIdHex = ownNodeId?.joinToString("") { "%02x".format(it) }.orEmpty()
+    val batteryUnrestricted = rememberBatteryOptimisationExempt()
 
     Scaffold(
         topBar = {
@@ -69,6 +74,9 @@ fun NetworkScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (!batteryUnrestricted) {
+                item { BackgroundReliabilityWarning() }
+            }
             item { MeshHero(active = uiState.active, peerCount = uiState.nodeCount) }
             item {
                 StatusSummaryCard(
@@ -123,6 +131,60 @@ fun NetworkScreen(
             },
             confirmButton = { TextButton(onClick = { showQrDialog = false }) { Text("Close") } }
         )
+    }
+}
+
+@Composable
+private fun rememberBatteryOptimisationExempt(): Boolean {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var exempt by remember(context) { mutableStateOf(isBatteryOptimisationExempt(context)) }
+
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                exempt = isBatteryOptimisationExempt(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return exempt
+}
+
+private fun isBatteryOptimisationExempt(context: android.content.Context): Boolean =
+    context.getSystemService(android.os.PowerManager::class.java)
+        ?.isIgnoringBatteryOptimizations(context.packageName) == true
+
+@Composable
+private fun BackgroundReliabilityWarning() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.BatteryAlert,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Column {
+                Text(
+                    stringResource(com.rezvani.mesh.R.string.background_reliability_limited),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Text(
+                    stringResource(com.rezvani.mesh.R.string.background_reliability_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
     }
 }
 
@@ -251,7 +313,7 @@ private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, s
             animationSpec = infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
             label = "dotScale"
         )
-        val dotColor = if (active) androidx.compose.ui.graphics.Color(0xFF22C55E) else androidx.compose.ui.graphics.Color(0xFFF59E0B)
+        val dotColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
         Box(modifier = Modifier.size(16.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 // Outer glow halo

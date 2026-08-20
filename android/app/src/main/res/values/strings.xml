@@ -158,6 +158,9 @@
     <string name="get_started">Get Started</string>
     <string name="create_new">Create New</string>
     <string name="failed">Failed</string>
+    <string name="retry_message">Retry message</string>
+    <string name="background_reliability_limited">Background reliability is limited</string>
+    <string name="background_reliability_description">Battery restrictions may delay mesh discovery and messages when Rezvan is in the background.</string>
 
     <!-- Service -->
     <string name="mesh_service_title">Rezvan Mesh</string>

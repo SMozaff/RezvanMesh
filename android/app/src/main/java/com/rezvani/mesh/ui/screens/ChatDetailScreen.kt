@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -135,7 +136,14 @@ fun ChatDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(messages, key = { it.id }) { message ->
-                        MessageBubble(message = message)
+                        MessageBubble(
+                            message = message,
+                            onRetry = if (!isSending) {
+                                { viewModel.retryMessage(message) }
+                            } else {
+                                null
+                            }
+                        )
                     }
                 }
             }
@@ -144,7 +152,7 @@ fun ChatDetailScreen(
 }
 
 @Composable
-fun MessageBubble(message: MessageEntity) {
+fun MessageBubble(message: MessageEntity, onRetry: (() -> Unit)? = null) {
     val isOutgoing = message.isOutgoing
     val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val timeString = dateFormat.format(Date(message.timestamp))
@@ -191,6 +199,19 @@ fun MessageBubble(message: MessageEntity) {
                     if (isOutgoing) {
                         Spacer(modifier = Modifier.width(4.dp))
                         MessageStatusIndicator(status = message.status)
+                        if (message.status == com.rezvani.mesh.data.entities.MessageStatus.FAILED && onRetry != null) {
+                            IconButton(
+                                onClick = onRetry,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.retry_message),
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

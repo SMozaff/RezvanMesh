@@ -45,6 +45,39 @@ class ChannelDetailViewModel(application: Application) : AndroidViewModel(applic
         _sendError.value = null
     }
 
+    fun retryMessage(message: MessageEntity) {
+        if (!message.isOutgoing || message.status != MessageStatus.FAILED) return
+
+        viewModelScope.launch {
+            if (_isSending.value) return@launch
+            _isSending.value = true
+            _sendError.value = null
+            try {
+                val channelId = message.conversationId
+                    .removePrefix("channel_")
+                    .toIntOrNull()
+                if (channelId == null || !message.conversationId.startsWith("channel_")) {
+                    _sendError.value = "This channel message has an invalid channel ID."
+                    return@launch
+                }
+
+                messageRepo.updateStatus(message.id, MessageStatus.QUEUED)
+                val result = MeshServiceConnection.activeService
+                    ?.sendChannelMessage(channelId, message.content.toByteArray())
+                    ?: SendResult.NotReady
+                if (result !is SendResult.Queued) {
+                    messageRepo.updateStatus(message.id, MessageStatus.FAILED)
+                    _sendError.value = result.failureMessage()
+                }
+            } catch (error: Exception) {
+                messageRepo.updateStatus(message.id, MessageStatus.FAILED)
+                _sendError.value = error.message ?: "Channel message could not be queued"
+            } finally {
+                _isSending.value = false
+            }
+        }
+    }
+
     fun sendMessage(channelId: Int, text: String) {
         viewModelScope.launch {
             if (_isSending.value) return@launch
