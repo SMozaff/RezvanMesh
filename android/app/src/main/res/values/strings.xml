@@ -73,6 +73,24 @@
     <string name="trust_known">Known</string>
     <string name="trust_blocked">Blocked</string>
 
+    <!-- Network -->
+    <string name="my_mesh_id">My Mesh ID</string>
+    <string name="nearby">Nearby</string>
+    <string name="no_devices_nearby">No devices nearby yet. Keep the app open — discovery runs in the background.</string>
+    <string name="advanced_network_monitoring">Advanced network monitoring</string>
+    <string name="battery">Battery</string>
+    <string name="peer_found">1 peer found</string>
+    <string name="peers_found">%1$d peers found</string>
+    <string name="scanning">Scanning…</string>
+    <string name="peer_format">Peer %1$s</string>
+    <string name="connected">Connected</string>
+    <string name="nearby_connecting">Nearby — connecting</string>
+    <string name="no_peers_yet">No peers yet</string>
+    <string name="nearby_count">%1$d nearby</string>
+    <string name="status_delivered">Delivered</string>
+    <string name="status_sent">Sent</string>
+    <string name="status_failed_to_queue">Failed to queue</string>
+
     <!-- Emergency -->
     <string name="emergency_title">Emergency</string>
     <string name="emergency_alert">Emergency Alert</string>

@@ -26,6 +26,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.MeshServiceConnection
+import com.rezvani.mesh.R
 import com.rezvani.mesh.ui.viewmodel.PeerUiModel
 import com.rezvani.mesh.ui.viewmodel.StatusViewModel
 import com.rezvani.mesh.utils.BarcodeUtils
@@ -48,7 +49,7 @@ fun NetworkScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Rezvan Mesh") },
+                title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     // Battery in Network screen (moved from Chats)
                     BatteryStatusChip(
@@ -58,7 +59,7 @@ fun NetworkScreen(
                     Spacer(Modifier.width(4.dp))
                     if (ownNodeIdHex.isNotBlank()) {
                         IconButton(onClick = { showQrDialog = true }) {
-                            Icon(Icons.Default.QrCode2, contentDescription = "My Mesh ID")
+                            Icon(Icons.Default.QrCode2, contentDescription = stringResource(R.string.my_mesh_id))
                         }
                     }
                 },
@@ -88,13 +89,13 @@ fun NetworkScreen(
                 )
             }
             item {
-                Text("Nearby", style = MaterialTheme.typography.titleMedium,
+                Text(stringResource(R.string.nearby), style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface)
             }
             if (uiState.peers.isEmpty()) {
                 item {
                     Text(
-                        "No devices nearby yet. Keep the app open - discovery runs in the background.",
+                        stringResource(R.string.no_devices_nearby),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -108,7 +109,7 @@ fun NetworkScreen(
                 OutlinedButton(onClick = onOpenAdvanced, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Analytics, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Advanced network monitoring")
+                    Text(stringResource(R.string.advanced_network_monitoring))
                 }
             }
         }
@@ -117,20 +118,20 @@ fun NetworkScreen(
     if (showQrDialog && ownNodeIdHex.isNotBlank()) {
         AlertDialog(
             onDismissRequest = { showQrDialog = false },
-            title = { Text("Your Mesh ID") },
+            title = { Text(stringResource(R.string.my_mesh_id)) },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val bmp = remember(ownNodeIdHex) { BarcodeUtils.generateQrCodeBitmap(ownNodeIdHex) }
                     bmp?.let {
                         androidx.compose.foundation.Image(bitmap = it.asImageBitmap(),
-                            contentDescription = "QR", modifier = Modifier.size(200.dp))
+                            contentDescription = stringResource(R.string.my_mesh_id), modifier = Modifier.size(200.dp))
                     }
                     Text(ownNodeIdHex, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
-            confirmButton = { TextButton(onClick = { showQrDialog = false }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { showQrDialog = false }) { Text(stringResource(R.string.close)) } }
         )
     }
 }
@@ -175,12 +176,12 @@ private fun BackgroundReliabilityWarning() {
             )
             Column {
                 Text(
-                    stringResource(com.rezvani.mesh.R.string.background_reliability_limited),
+                    stringResource(R.string.background_reliability_limited),
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
                 Text(
-                    stringResource(com.rezvani.mesh.R.string.background_reliability_description),
+                    stringResource(R.string.background_reliability_description),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
@@ -214,7 +215,7 @@ fun BatteryStatusChip(level: Int, charging: Boolean) {
                         level <= 60 -> Icons.Default.Battery4Bar
                         else -> Icons.Default.BatteryFull
                     },
-                contentDescription = "Battery",
+                contentDescription = stringResource(R.string.battery),
                 tint = color,
                 modifier = Modifier.size(16.dp)
             )
@@ -285,7 +286,12 @@ private fun MeshHero(active: Boolean, peerCount: Int) {
                 Spacer(Modifier.height(110.dp))
                 // Animated peer count badge
                 AnimatedContent(
-                    targetState = if (active) "$peerCount peer${if (peerCount != 1) "s" else ""} found" else "Scanning...",
+                    targetState = if (active) {
+                        if (peerCount == 1) stringResource(R.string.peer_found)
+                        else stringResource(R.string.peers_found, peerCount)
+                    } else {
+                        stringResource(R.string.scanning)
+                    },
                     transitionSpec = { fadeIn(tween(300)) + slideInVertically { it/2 } togetherWith fadeOut(tween(200)) },
                     label = "statusText"
                 ) { text ->
@@ -325,7 +331,11 @@ private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, s
         }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(if (active) "$peerCount nearby" else "No peers yet", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (active) stringResource(R.string.nearby_count, peerCount)
+                    else stringResource(R.string.no_peers_yet),
+                    style = MaterialTheme.typography.titleMedium
+                )
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(signal, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -336,10 +346,14 @@ private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, s
 @Composable
 private fun PeerRow(peer: PeerUiModel) {
     val abbreviatedId = "${peer.nodeIdHex.take(4)}…${peer.nodeIdHex.takeLast(4)}"
-    val connectionLabel = if (peer.connected) "Connected" else "Nearby — connecting"
+    val connectionLabel = if (peer.connected) {
+        stringResource(R.string.connected)
+    } else {
+        stringResource(R.string.nearby_connecting)
+    }
     val signal = peer.rssi?.let { "$it dBm" } ?: "--"
     ListItem(
-        headlineContent = { Text("Peer $abbreviatedId") },
+        headlineContent = { Text(stringResource(R.string.peer_format, abbreviatedId)) },
         supportingContent = { Text(connectionLabel, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingContent = {

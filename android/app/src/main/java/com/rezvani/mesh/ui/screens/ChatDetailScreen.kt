@@ -232,10 +232,10 @@ fun MessageStatusIndicator(status: Int) {
     val (icon, tint, description) = when (status) {
         com.rezvani.mesh.data.entities.MessageStatus.DELIVERED,
         com.rezvani.mesh.data.entities.MessageStatus.READ ->
-            Triple(Icons.Default.DoneAll, MaterialTheme.colorScheme.primary, "Delivered")
+            Triple(Icons.Default.DoneAll, MaterialTheme.colorScheme.primary, stringResource(R.string.status_delivered))
         com.rezvani.mesh.data.entities.MessageStatus.FAILED ->
-            Triple(Icons.Default.Warning, MaterialTheme.colorScheme.error, "Failed to queue")
-        else -> Triple(Icons.Default.Check, MaterialTheme.colorScheme.outline, "Sent")
+            Triple(Icons.Default.Warning, MaterialTheme.colorScheme.error, stringResource(R.string.status_failed_to_queue))
+        else -> Triple(Icons.Default.Check, MaterialTheme.colorScheme.outline, stringResource(R.string.status_sent))
     }
     Icon(imageVector = icon, contentDescription = description, modifier = Modifier.size(14.dp), tint = tint)
 }
