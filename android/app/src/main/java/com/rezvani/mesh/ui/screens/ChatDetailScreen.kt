@@ -224,10 +224,11 @@ fun MessageBubble(message: MessageEntity, onRetry: (() -> Unit)? = null) {
 @Composable
 fun MessageStatusIndicator(status: Int) {
     if (status == com.rezvani.mesh.data.entities.MessageStatus.QUEUED) {
+        val queuedDescription = stringResource(R.string.status_queued)
         CircularProgressIndicator(
             modifier = Modifier
                 .size(14.dp)
-                .semantics { contentDescription = stringResource(R.string.status_queued) },
+                .semantics { contentDescription = queuedDescription },
             strokeWidth = 1.5.dp,
             color = MaterialTheme.colorScheme.outline
         )
