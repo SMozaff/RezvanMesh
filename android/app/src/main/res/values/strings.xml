@@ -75,6 +75,23 @@
     <string name="trust_verified">Verified</string>
     <string name="trust_known">Known</string>
     <string name="trust_blocked">Blocked</string>
+    <string name="contacts_selected">%1$d selected</string>
+    <string name="scan_qr">Scan QR</string>
+    <string name="my_qr">My QR</string>
+    <string name="add_contact_description">Add contact</string>
+    <string name="contacts_empty_hint">Scan a peer's QR code or tap +</string>
+    <string name="delete_contacts">Delete Contacts</string>
+    <string name="delete_contacts_confirmation">Remove %1$d contact(s)?</string>
+    <string name="contact_name">Contact name</string>
+    <string name="node_id_hex">Node ID (16 hex chars)</string>
+    <string name="node_id_validation">Must be exactly 16 hexadecimal characters</string>
+    <string name="scan_qr_instead">Or scan QR code instead</string>
+    <string name="save">Save</string>
+    <string name="scan_failed">Scan failed</string>
+    <string name="ok">OK</string>
+    <string name="share_contact_qr">Share this QR code so others can add you.</string>
+    <string name="open_chat">Open chat</string>
+    <string name="invalid_contact_qr">QR code doesn't contain a valid Rezvan node ID.\nScanned: &quot;%1$s&quot;</string>
 
     <!-- Network -->
     <string name="my_mesh_id">My Mesh ID</string>
