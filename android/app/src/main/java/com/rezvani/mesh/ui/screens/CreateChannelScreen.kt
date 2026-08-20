@@ -53,8 +53,12 @@ fun CreateChannelScreen(
         if (scanned != null) {
             val share = ChannelQrCodec.decode(scanned)
             if (share != null) {
-                viewModel.joinChannelWithKey(share.channelId, share.key)
-                onChannelCreated()
+                viewModel.joinChannelWithKey(
+                    channelId = share.channelId,
+                    key = share.key,
+                    onSuccess = onChannelCreated,
+                    onError = { message -> joinError = message }
+                )
             } else {
                 joinError = scanned
             }

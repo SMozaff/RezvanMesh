@@ -94,11 +94,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Real on-disk usage: the encrypted message database plus the app cache
-     * directory. Voice recordings are written under cacheDir (see
-     * VoiceViewModel.startRecording), so a DB-only figure would understate
-     * actual usage -- the DB stores only a "path|duration" string for voice
-     * messages, not the audio bytes themselves.
+     * Real on-disk usage includes the encrypted message database and the app
+     * cache directory. Cache files are included so this remains accurate if a
+     * future feature writes temporary media or diagnostics outside the DB.
      */
     fun refreshStorageUsed() {
         viewModelScope.launch {

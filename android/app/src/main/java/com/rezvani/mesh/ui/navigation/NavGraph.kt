@@ -115,7 +115,6 @@ fun NavGraph(
                     ?.getStateFlow<String?>("qr_scan_result_channel", null)
             )
         }
-        composable("messages") { MessagesScreen(meshConnection) }
         composable("contacts") {
             ContactsScreen(
                 meshConnection = meshConnection,
@@ -152,6 +151,5 @@ fun NavGraph(
             )
         }
         composable("diagnostics") { DiagnosticsScreen(onNavigateBack = { navController.popBackStack() }) }
-        composable("voice") { VoiceScreen() }
     }
 }

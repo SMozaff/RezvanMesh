@@ -86,11 +86,33 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
      * agreed on by all members somehow, and this is that "somehow" for the
      * joining side.
      */
-    fun joinChannelWithKey(channelId: Int, key: ByteArray) {
+    fun joinChannelWithKey(
+        channelId: Int,
+        key: ByteArray,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
         viewModelScope.launch {
-            val stored = com.rezvani.mesh.MeshServiceConnection.activeService?.setChannelKey(channelId, key)
-            if (stored == true) {
-                channelRepo.joinChannel(channelId)
+            if (key.isEmpty()) {
+                onError("The channel invite did not contain a valid key.")
+                return@launch
+            }
+
+            val service = com.rezvani.mesh.MeshServiceConnection.activeService
+            if (service == null) {
+                onError("Mesh service is unavailable. Reconnect and try the channel invite again.")
+                return@launch
+            }
+
+            try {
+                if (service.setChannelKey(channelId, key)) {
+                    channelRepo.joinChannel(channelId)
+                    onSuccess()
+                } else {
+                    onError("The channel invite could not be accepted. Verify the invite and try again.")
+                }
+            } catch (error: Exception) {
+                onError(error.message ?: "The channel invite could not be accepted. Try again.")
             }
         }
     }
