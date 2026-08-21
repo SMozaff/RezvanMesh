@@ -13,7 +13,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rezvan_common::NodeId;
+use rezvan_common::{
+    NodeId, CAPABILITY_FORMAT_VERSION, CAP_MESSAGE_ID_AND_ACK,
+};
 use rezvan_crypto::{CryptoProvider, IdentityKeypair};
 use vodozemac::olm::{Account, OlmMessage, Session, SessionConfig};
 use vodozemac::{Curve25519PublicKey, KeyId};
@@ -43,6 +45,7 @@ struct PeerKeys {
     one_time: Curve25519PublicKey,
     x25519_identity: [u8; 32],
     ed25519_identity: [u8; 32],
+    capabilities: u32,
 }
 
 pub struct SessionManager {
@@ -298,13 +301,16 @@ impl SessionManager {
         let epoch_key = self.epoch_key.expect("ensure_epoch_key just guaranteed this is Some");
         let epoch_number = self.epoch_number;
 
-        let mut out = Vec::with_capacity(164);
+        let mut out = Vec::with_capacity(169);
         out.extend_from_slice(&olm_identity);
         out.extend_from_slice(&one_time);
         out.extend_from_slice(&self.identity.public_x25519);
         out.extend_from_slice(&self.identity.public_ed25519);
         out.extend_from_slice(&epoch_number.to_be_bytes());
         out.extend_from_slice(&epoch_key);
+        // Optional, backward-compatible Gate 1 capability extension.
+        out.push(CAPABILITY_FORMAT_VERSION);
+        out.extend_from_slice(&CAP_MESSAGE_ID_AND_ACK.to_be_bytes());
         out
     }
 
@@ -330,6 +336,12 @@ impl SessionManager {
         their_epoch_key.copy_from_slice(&bundle[132..164]);
         self.converge_epoch_key(their_epoch, their_epoch_key);
 
+        let capabilities = if bundle.len() >= 169 && bundle[164] == CAPABILITY_FORMAT_VERSION {
+            u32::from_be_bytes([bundle[165], bundle[166], bundle[167], bundle[168]])
+        } else {
+            0
+        };
+
         self.peer_keys.insert(
             *peer,
             PeerKeys {
@@ -337,6 +349,7 @@ impl SessionManager {
                 one_time: Curve25519PublicKey::from_bytes(ot),
                 x25519_identity: x25519_id,
                 ed25519_identity: ed25519_id,
+                capabilities,
             },
         );
         true
@@ -354,6 +367,15 @@ impl SessionManager {
     /// signatures. `None` if no KeyAnnouncement has been received yet.
     pub fn peer_ed25519_identity(&self, peer: &NodeId) -> Option<[u8; 32]> {
         self.peer_keys.get(peer).map(|k| k.ed25519_identity)
+    }
+
+    /// Whether a peer has advertised the Gate 1 direct-message identity and
+    /// acknowledgement extension. Missing or unknown extensions are legacy.
+    pub fn supports_message_id_ack(&self, peer: &NodeId) -> bool {
+        self.peer_keys
+            .get(peer)
+            .map(|keys| keys.capabilities & CAP_MESSAGE_ID_AND_ACK != 0)
+            .unwrap_or(false)
     }
 
     /// Our own mesh X25519 private key, for deriving a beacon MAC key.
@@ -460,8 +482,10 @@ mod tests {
         let bundle1 = mgr.key_bundle();
         let bundle2 = mgr.key_bundle();
 
-        assert_eq!(bundle1.len(), 164, "bundle grew to 164 bytes with the epoch key/number appended");
-        assert_eq!(bundle2.len(), 164);
+        assert_eq!(bundle1.len(), 169, "bundle includes epoch fields and Gate 1 capability extension");
+        assert_eq!(bundle2.len(), 169);
+        assert_eq!(bundle1[164], CAPABILITY_FORMAT_VERSION);
+        assert_eq!(u32::from_be_bytes(bundle1[165..169].try_into().unwrap()), CAP_MESSAGE_ID_AND_ACK);
         // Olm identity key (bytes 0..32) and mesh identity keys (64..128)
         // must stay the same across calls -- only the OTK (32..64) rotates.
         assert_eq!(&bundle1[0..32], &bundle2[0..32], "olm identity key must be stable");

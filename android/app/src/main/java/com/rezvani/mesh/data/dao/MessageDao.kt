@@ -22,6 +22,25 @@ interface MessageDao {
     @Query("UPDATE messages SET status = :status WHERE id = :messageId")
     suspend fun updateStatus(messageId: String, status: Int)
 
+    @Query("SELECT * FROM messages WHERE senderId = :senderId AND protocolMessageId = :protocolMessageId LIMIT 1")
+    suspend fun findBySenderAndProtocolMessageId(senderId: String, protocolMessageId: String): MessageEntity?
+
+    @Query("""
+        UPDATE messages
+        SET status = :remoteReceivedStatus,
+            remoteReceivedAtMs = :receivedAtMs,
+            remoteAckSenderId = :ackSenderId
+        WHERE isOutgoing = 1
+          AND protocolMessageId = :protocolMessageId
+          AND recipientNodeId = :ackSenderId
+    """)
+    suspend fun markRemoteReceived(
+        protocolMessageId: String,
+        ackSenderId: String,
+        receivedAtMs: Long,
+        remoteReceivedStatus: Int
+    ): Int
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY timestamp DESC")
     fun getMessagesForConversation(conversationId: String): Flow<List<MessageEntity>>
 

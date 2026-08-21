@@ -21,6 +21,7 @@ import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.ui.components.PowerState
 import com.rezvani.mesh.backup.IdentityBackupHelper
 import com.rezvani.mesh.utils.DiagLogger
+import com.rezvani.mesh.radio.failureMessage
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -231,22 +232,49 @@ class RezvanRadioService : Service() {
                         if (offset + payloadLen > result.size) break
                         val payload = result.copyOfRange(offset, offset + payloadLen)
                         offset += payloadLen
-                        if (actionType == 0x05) {
-                            val msg = com.rezvani.mesh.rust.DecryptedMessage(
-                                conversationId = payload.copyOfRange(0, 16),
-                                senderId = payload.copyOfRange(16, 24),
-                                timestamp = ((payload[24].toLong() and 0xFF) shl 56) or
-                                        ((payload[25].toLong() and 0xFF) shl 48) or
-                                        ((payload[26].toLong() and 0xFF) shl 40) or
-                                        ((payload[27].toLong() and 0xFF) shl 32) or
-                                        ((payload[28].toLong() and 0xFF) shl 24) or
-                                        ((payload[29].toLong() and 0xFF) shl 16) or
-                                        ((payload[30].toLong() and 0xFF) shl 8) or
-                                        (payload[31].toLong() and 0xFF),
-                                messageType = payload[32],
-                                content = payload.copyOfRange(37, payload.size)
-                            )
-                            meshConnection?.addReceivedMessage(msg)
+                        when (actionType) {
+                            0x05 -> {
+                                if (payload.size < 38) continue
+                                val contentLen = ((payload[33].toInt() and 0xFF) shl 24) or
+                                        ((payload[34].toInt() and 0xFF) shl 16) or
+                                        ((payload[35].toInt() and 0xFF) shl 8) or
+                                        (payload[36].toInt() and 0xFF)
+                                val contentEnd = 37L + contentLen.toLong()
+                                if (contentLen < 0 || contentEnd + 1 > payload.size) continue
+                                val idFlagOffset = contentEnd.toInt()
+                                val protocolMessageId = when (payload[idFlagOffset].toInt() and 0xFF) {
+                                    0 -> if (idFlagOffset + 1 == payload.size) null else continue
+                                    1 -> if (idFlagOffset + 17 == payload.size) {
+                                        payload.copyOfRange(idFlagOffset + 1, idFlagOffset + 17)
+                                    } else continue
+                                    else -> continue
+                                }
+                                val msg = com.rezvani.mesh.rust.DecryptedMessage(
+                                    conversationId = payload.copyOfRange(0, 16),
+                                    senderId = payload.copyOfRange(16, 24),
+                                    timestamp = ((payload[24].toLong() and 0xFF) shl 56) or
+                                            ((payload[25].toLong() and 0xFF) shl 48) or
+                                            ((payload[26].toLong() and 0xFF) shl 40) or
+                                            ((payload[27].toLong() and 0xFF) shl 32) or
+                                            ((payload[28].toLong() and 0xFF) shl 24) or
+                                            ((payload[29].toLong() and 0xFF) shl 16) or
+                                            ((payload[30].toLong() and 0xFF) shl 8) or
+                                            (payload[31].toLong() and 0xFF),
+                                    messageType = payload[32],
+                                    protocolMessageId = protocolMessageId,
+                                    content = payload.copyOfRange(37, idFlagOffset)
+                                )
+                                val receipt = meshConnection?.addReceivedMessage(msg)
+                                if (receipt != null) {
+                                    sendReceivedAcknowledgement(receipt.originalSender, receipt.protocolMessageId)
+                                }
+                            }
+                            0x07 -> if (payload.size == 24) {
+                                meshConnection?.onMessageAcknowledged(
+                                    protocolMessageId = payload.copyOfRange(0, 16),
+                                    ackSender = payload.copyOfRange(16, 24)
+                                )
+                            }
                         }
                     }
                 }
@@ -265,16 +293,42 @@ class RezvanRadioService : Service() {
      * A successful result is intentionally limited to local queue acceptance;
      * the current protocol does not prove remote delivery here.
      */
-    suspend fun sendMessage(recipient: ByteArray, plaintext: ByteArray): SendResult {
+    suspend fun sendMessage(
+        recipient: ByteArray,
+        protocolMessageId: ByteArray,
+        createdAtMs: Long,
+        plaintext: ByteArray
+    ): SendResult {
         if (enginePtr == 0L || radioController == null) return SendResult.NotReady
+        if (protocolMessageId.size != 16) return SendResult.Failed("Invalid persistent message identity")
         return try {
             val result = withContext(Dispatchers.IO) {
-                com.rezvani.mesh.MeshCore.nativeSendMessage(enginePtr, recipient, plaintext, 0)
+                com.rezvani.mesh.MeshCore.nativeSendMessageV1(
+                    enginePtr, recipient, protocolMessageId, createdAtMs, 0, plaintext
+                )
             } ?: return SendResult.Failed("Mesh engine did not create a message packet")
             ActionDispatcher.dispatch(result, radioController!!)
         } catch (e: Exception) {
-            DiagLogger.err("SERVICE", "Send error: ${e.message}", e)
+            DiagLogger.err("SERVICE", "Gate 1 send error: ${e.message}", e)
             SendResult.Failed(e.message ?: "Could not submit message to the mesh")
+        }
+    }
+
+    /** Sends a receipt only after [MeshServiceConnection] reports durable inbound storage. */
+    private suspend fun sendReceivedAcknowledgement(originalSender: ByteArray, messageId: ByteArray) {
+        if (enginePtr == 0L || radioController == null || originalSender.size != 8 || messageId.size != 16) return
+        try {
+            val result = withContext(Dispatchers.IO) {
+                com.rezvani.mesh.MeshCore.nativeBuildMessageReceivedAck(
+                    enginePtr, originalSender, messageId, System.currentTimeMillis()
+                )
+            } ?: return
+            val dispatch = ActionDispatcher.dispatch(result, radioController!!)
+            if (dispatch !is SendResult.Queued) {
+                DiagLogger.ble("Receipt acknowledgement not locally queued: ${dispatch.failureMessage()}")
+            }
+        } catch (e: Exception) {
+            DiagLogger.err("SERVICE", "Receipt acknowledgement error: ${e.message}", e)
         }
     }
 

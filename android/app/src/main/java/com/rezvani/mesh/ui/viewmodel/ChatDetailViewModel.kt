@@ -10,6 +10,7 @@ import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.entities.MessageEntity
 import com.rezvani.mesh.data.entities.MessageStatus
 import com.rezvani.mesh.data.repositories.MessageRepository
+import com.rezvani.mesh.data.repositories.ProtocolMessageId
 import com.rezvani.mesh.radio.SendResult
 import com.rezvani.mesh.radio.failureMessage
 import kotlinx.coroutines.flow.*
@@ -58,17 +59,25 @@ class ChatDetailViewModel(application: Application) : AndroidViewModel(applicati
                     return@launch
                 }
 
-                val messageId = messageRepo.insertTextMessage(
+                val message = messageRepo.insertDirectTextMessage(
                     conversationId = conversationId,
-                    text = text,
-                    isOutgoing = true
+                    recipientNodeId = conversationId.lowercase(),
+                    text = text
                 )
+                val protocolId = ProtocolMessageId.toBytes(message.protocolMessageId.orEmpty())
+                if (protocolId == null) {
+                    messageRepo.updateStatus(message.id, MessageStatus.FAILED)
+                    _sendError.value = "Message identity could not be created."
+                    return@launch
+                }
                 val result = MeshServiceConnection.activeService
-                    ?.sendMessage(recipient, text.toByteArray())
+                    ?.sendMessage(recipient, protocolId, message.timestamp, text.toByteArray())
                     ?: SendResult.NotReady
 
-                if (result !is SendResult.Queued) {
-                    messageRepo.updateStatus(messageId, MessageStatus.FAILED)
+                if (result is SendResult.Queued) {
+                    messageRepo.updateStatus(message.id, MessageStatus.LOCAL_TRANSPORT_ACCEPTED)
+                } else {
+                    messageRepo.updateStatus(message.id, MessageStatus.FAILED)
                     _sendError.value = result.failureMessage()
                 }
             } catch (e: Exception) {
@@ -98,14 +107,21 @@ class ChatDetailViewModel(application: Application) : AndroidViewModel(applicati
                     return@launch
                 }
 
-                // Reset to the truthful local pending state before attempting
-                // resubmission. Any rejection below restores FAILED.
+                val protocolId = ProtocolMessageId.toBytes(message.protocolMessageId.orEmpty())
+                if (protocolId == null) {
+                    _sendError.value = "This legacy message has no persistent protocol identity to retry."
+                    return@launch
+                }
+                // Retry retains the exact Gate 1 wire identity. Any rejection
+                // below restores FAILED; success is local transport acceptance.
                 messageRepo.updateStatus(message.id, MessageStatus.QUEUED)
                 val result = MeshServiceConnection.activeService
-                    ?.sendMessage(recipient, message.content.toByteArray())
+                    ?.sendMessage(recipient, protocolId, message.timestamp, message.content.toByteArray())
                     ?: SendResult.NotReady
 
-                if (result !is SendResult.Queued) {
+                if (result is SendResult.Queued) {
+                    messageRepo.updateStatus(message.id, MessageStatus.LOCAL_TRANSPORT_ACCEPTED)
+                } else {
                     messageRepo.updateStatus(message.id, MessageStatus.FAILED)
                     _sendError.value = result.failureMessage()
                 }

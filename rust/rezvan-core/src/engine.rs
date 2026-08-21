@@ -5,7 +5,8 @@ use crate::power::{PowerState, compute_state};
 use crate::routing::RoutingTable;
 use crate::session::SessionManager;
 use rezvan_common::{
-    AdvBeaconExt, DecryptedMessage, MeshPacketHeader, NodeId,
+    AdvBeaconExt, DecryptedMessage, DirectMessageEnvelopeV1, MessageAckEnvelopeV1,
+    MessageId, MeshPacketHeader, NodeId, PACKET_TYPE_MESSAGE_ACK,
     MESH_PACKET_VERSION, MESH_PACKET_SIGNATURE_LEN,
 };
 use rezvan_crypto::CryptoProvider;
@@ -209,7 +210,7 @@ impl MeshEngine {
         // All others (0x01 OGM, 0x03 broadcast, 0x04 handshake, 0x05 KeyAnn,
         // 0x06 channel message) carry a 64-byte Ed25519 signature appended
         // after the payload.
-        let needs_sig = matches!(header.packet_type, 0x01 | 0x03 | 0x04 | 0x05 | 0x06);
+        let needs_sig = matches!(header.packet_type, 0x01 | 0x03 | 0x04 | 0x05 | 0x06 | PACKET_TYPE_MESSAGE_ACK);
 
         if needs_sig {
             let expected_len = payload_end + MESH_PACKET_SIGNATURE_LEN;
@@ -340,7 +341,7 @@ impl MeshEngine {
         // only reflects what the originator set, and `seen_and_record` is
         // the sole loop-prevention mechanism. See `build_relay_action`'s
         // docs for the full reasoning.
-        let is_relay_candidate = matches!(header.packet_type, 0x02 | 0x03 | 0x06);
+        let is_relay_candidate = matches!(header.packet_type, 0x02 | 0x03 | 0x06 | PACKET_TYPE_MESSAGE_ACK);
         if is_relay_candidate {
             if self.routing.seen_and_record(header.originator, header.sequence) {
                 // Already relayed this exact (originator, sequence) before
@@ -454,12 +455,25 @@ impl MeshEngine {
                 // Direct message: authenticated by Olm AEAD, no extra sig.
                 if let Some(payload) = raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
                     if let Ok(plain) = self.sessions.decrypt(&header.originator, payload) {
+                        // Gate 1 envelopes carry a stable application ID inside
+                        // the ciphertext. Legacy plaintext remains readable but
+                        // cannot produce a receipt acknowledgement.
+                        let (protocol_message_id, created_at_ms, content) =
+                            if plain.starts_with(&rezvan_common::DIRECT_ENVELOPE_MAGIC) {
+                                match DirectMessageEnvelopeV1::deserialize(&plain) {
+                                    Some(envelope) => (Some(envelope.message_id), envelope.created_at_ms, envelope.body),
+                                    None => return (None, Vec::new()),
+                                }
+                            } else {
+                                (None, timestamp, plain)
+                            };
                         return (Some(DecryptedMessage {
                             conversation_id: [0u8; 16],
                             sender_id: header.originator,
-                            timestamp,
+                            timestamp: created_at_ms,
                             message_type: 0,
-                            content: plain,
+                            protocol_message_id,
+                            content,
                         }), Vec::new());
                     }
                 }
@@ -478,6 +492,7 @@ impl MeshEngine {
                         sender_id: header.originator,
                         timestamp,
                         message_type: 3,
+                        protocol_message_id: None,
                         content,
                     }), Vec::new());
                 }
@@ -534,11 +549,43 @@ impl MeshEngine {
                             sender_id: header.originator,
                             timestamp,
                             message_type: 6,
+                            protocol_message_id: None,
                             content: plain,
                         }), Vec::new())
                     }
                     None => (None, Vec::new()), // wrong key, forged sender, or tampered
                 }
+            }
+            PACKET_TYPE_MESSAGE_ACK => {
+                // Acknowledgements are signed by the recipient at the outer
+                // packet layer and encrypted to the original sender. The
+                // signature has already been verified before dispatch.
+                if header.destination != self.node_id {
+                    return (None, Vec::new());
+                }
+                let payload = match raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
+                    Some(payload) => payload,
+                    None => return (None, Vec::new()),
+                };
+                let plain = match self.sessions.decrypt(&header.originator, payload) {
+                    Ok(plain) => plain,
+                    Err(_) => return (None, Vec::new()),
+                };
+                let ack = match MessageAckEnvelopeV1::deserialize(&plain) {
+                    Some(ack) => ack,
+                    None => return (None, Vec::new()),
+                };
+                if ack.original_sender != self.node_id || ack.original_recipient != header.originator {
+                    return (None, vec![Action::DiagLog {
+                        tag: "RUST".into(),
+                        level: 2,
+                        message: "Rejected acknowledgement with mismatched sender/recipient binding".into(),
+                    }]);
+                }
+                (None, vec![Action::MessageAcknowledged {
+                    message_id: ack.message_id,
+                    ack_sender: header.originator,
+                }])
             }
             0x04 => {
                 // Handshake -- signature verified above.
@@ -629,6 +676,9 @@ impl MeshEngine {
         (None, actions)
     }
 
+    /// Legacy direct-message sender used only when the peer has not
+    /// advertised Gate 1 capability. It intentionally cannot generate a
+    /// remote-received acknowledgement.
     pub fn send_message(
         &mut self,
         recipient: &NodeId,
@@ -677,6 +727,85 @@ impl MeshEngine {
             target: next_hop,
             data: packet,
         }]
+    }
+
+    /// Send a Gate 1 direct text message carrying a stable application ID
+    /// inside the existing pairwise encrypted payload.
+    pub fn send_message_v1(
+        &mut self,
+        recipient: &NodeId,
+        message_id: MessageId,
+        created_at_ms: u64,
+        message_kind: u8,
+        body: &[u8],
+    ) -> Vec<Action> {
+        // Capability-negotiated fallback keeps legacy peers interoperable.
+        // Android still retains its local UUID, but no receipt is implied.
+        if !self.sessions.supports_message_id_ack(recipient) {
+            return self.send_message(recipient, body, message_kind);
+        }
+        let envelope = DirectMessageEnvelopeV1 {
+            message_kind,
+            message_id,
+            created_at_ms,
+            body: body.to_vec(),
+        };
+        let plain = match envelope.serialize() {
+            Some(plain) => plain,
+            None => return Vec::new(),
+        };
+        let encrypted = match self.sessions.encrypt(recipient, &plain) {
+            Ok(ciphertext) => ciphertext,
+            Err(_) => return Vec::new(),
+        };
+        let next_hop = self
+            .routing
+            .get_best_route(recipient)
+            .map(|route| route.next_hop)
+            .unwrap_or(*recipient);
+        self.ogm_sequence = self.ogm_sequence.wrapping_add(1);
+        let header = MeshPacketHeader {
+            version: MESH_PACKET_VERSION,
+            packet_type: 0x02,
+            ttl: 10,
+            originator: self.node_id,
+            destination: *recipient,
+            sequence: self.ogm_sequence,
+            hop_count: 0,
+            next_hop,
+            payload_len: encrypted.len() as u16,
+        };
+        let mut packet = header.serialize();
+        packet.extend_from_slice(&encrypted);
+        vec![Action::SendBlePacket { target: next_hop, data: packet }]
+    }
+
+    /// Build an encrypted, Ed25519-signed receipt acknowledgement after the
+    /// Android receiver has durably persisted the original message.
+    pub fn build_received_ack(
+        &mut self,
+        original_sender: &NodeId,
+        message_id: MessageId,
+        created_at_ms: u64,
+    ) -> Vec<Action> {
+        if *original_sender == self.node_id || message_id == [0u8; 16] {
+            return Vec::new();
+        }
+        let envelope = MessageAckEnvelopeV1 {
+            message_id,
+            original_sender: *original_sender,
+            original_recipient: self.node_id,
+            created_at_ms,
+        };
+        let encrypted = match self.sessions.encrypt(original_sender, &envelope.serialize()) {
+            Ok(ciphertext) => ciphertext,
+            Err(_) => return Vec::new(),
+        };
+        let packet = self.build_signed_packet(PACKET_TYPE_MESSAGE_ACK, 10, original_sender, &encrypted);
+        let target = MeshPacketHeader::deserialize(&packet)
+            .map(|header| header.next_hop)
+            .unwrap_or(*original_sender);
+        vec![Action::SendBlePacket { target, data: packet }]
     }
 
     pub fn send_broadcast(&mut self, message: &[u8]) -> Vec<Action> {
@@ -1009,6 +1138,41 @@ mod tests {
         bob.process_incoming(&a_announce, -60, 0);
         let b_announce = build_legit_key_announcement(bob);
         alice.process_incoming(&b_announce, -60, 0);
+    }
+
+    #[test]
+    fn test_gate1_direct_message_and_signed_received_ack_round_trip() {
+        let mut alice = make_engine(1);
+        let mut bob = make_engine(2);
+        exchange_key_announcements(&mut alice, &mut bob);
+
+        let message_id = [0xA5; 16];
+        let actions = alice.send_message_v1(
+            &bob.node_id,
+            message_id,
+            1_700_000_000_000,
+            0,
+            b"gate1 receipt",
+        );
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected direct SendBlePacket");
+        };
+        let (message, receive_actions) = bob.process_incoming(data, -55, 1_700_000_000_000);
+        assert!(receive_actions.is_empty());
+        let message = message.expect("Gate 1 message must decrypt");
+        assert_eq!(message.protocol_message_id, Some(message_id));
+        assert_eq!(message.content, b"gate1 receipt");
+
+        let ack_actions = bob.build_received_ack(&alice.node_id, message_id, 1_700_000_000_001);
+        let Action::SendBlePacket { data: ack_packet, .. } = &ack_actions[0] else {
+            panic!("expected signed acknowledgement SendBlePacket");
+        };
+        let (ack_message, ack_events) = alice.process_incoming(ack_packet, -55, 1_700_000_000_002);
+        assert!(ack_message.is_none());
+        assert!(matches!(
+            ack_events.as_slice(),
+            [Action::MessageAcknowledged { message_id: id, ack_sender }] if *id == message_id && *ack_sender == bob.node_id
+        ));
     }
 
     #[test]

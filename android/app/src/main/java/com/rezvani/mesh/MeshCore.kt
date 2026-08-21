@@ -18,6 +18,8 @@ object MeshCore {
     @JvmStatic external fun nativeProcessIncoming(corePtr: Long, packet: ByteArray, rssi: Int, timestampUs: Long): ByteArray?
     @JvmStatic external fun nativeTick(corePtr: Long): ByteArray?
     @JvmStatic external fun nativeSendMessage(corePtr: Long, recipientId: ByteArray, plaintext: ByteArray, messageType: Int): ByteArray?
+    @JvmStatic external fun nativeSendMessageV1(corePtr: Long, recipientId: ByteArray, messageId: ByteArray, createdAtMs: Long, messageKind: Int, body: ByteArray): ByteArray?
+    @JvmStatic external fun nativeBuildMessageReceivedAck(corePtr: Long, originalSender: ByteArray, messageId: ByteArray, createdAtMs: Long): ByteArray?
     @JvmStatic external fun nativeSendBroadcast(corePtr: Long, message: ByteArray): ByteArray?
     @JvmStatic external fun nativeGetKeyBundle(corePtr: Long): ByteArray?
     @JvmStatic external fun nativeGetNodeId(corePtr: Long): ByteArray?

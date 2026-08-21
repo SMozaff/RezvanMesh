@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.app.Application
 import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.repositories.MessageRepository
+import com.rezvani.mesh.data.repositories.ProtocolMessageId
 import com.rezvani.mesh.radio.RezvanRadioService
 import com.rezvani.mesh.radio.SendResult
 import com.rezvani.mesh.rust.DecryptedMessage
@@ -65,47 +66,69 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
         }
     }
 
-    suspend fun sendTextMessage(peerNodeId: ByteArray, text: String): SendResult =
-        activeService?.sendMessage(peerNodeId, text.toByteArray()) ?: SendResult.NotReady
+    suspend fun sendTextMessage(peerNodeId: ByteArray, text: String): SendResult {
+        val protocolId = ProtocolMessageId.toBytes(ProtocolMessageId.generateHex())
+            ?: return SendResult.Failed("Could not create persistent message identity")
+        return activeService?.sendMessage(peerNodeId, protocolId, System.currentTimeMillis(), text.toByteArray())
+            ?: SendResult.NotReady
+    }
 
     suspend fun sendEmergencyBroadcast(message: String): SendResult =
         activeService?.sendBroadcast(message.toByteArray()) ?: SendResult.NotReady
 
-    fun addReceivedMessage(msg: DecryptedMessage) {
-        // 1. Keep in-memory flow for live UI updates this session
+    /**
+     * Persists an inbound message. A non-null return means a Gate 1 direct
+     * message committed (or matched a committed duplicate) and may be
+     * acknowledged by the radio service.
+     */
+    suspend fun addReceivedMessage(msg: DecryptedMessage): ReceiptAcknowledgementRequest? {
         _receivedMessages.value = _receivedMessages.value + msg
-
-        // 2. Persist to SQLCipher DB so messages survive restart.
-        //
-        // CRITICAL: key the conversation by the SENDER's node id, not the engine's
-        // conversation_id field, for 1:1 messages. For channel messages
-        // (messageType == 6), conversation_id's first 4 bytes carry the
-        // channel_id (big-endian u32) instead -- see engine.rs's 0x06 handler
-        // -- so we build "channel_<id>" as the conversation key, matching
-        // ChannelDetailViewModel's convention.
-        scope.launch {
-            try {
-                val senderHex = msg.senderId.joinToString("") { "%02x".format(it) }
-                val conversationId = if ((msg.messageType.toInt() and 0xFF) == 6) {
+        return try {
+            val senderHex = msg.senderId.joinToString("") { "%02x".format(it) }
+            val messageType = msg.messageType.toInt() and 0xFF
+            val timestamp = if (msg.timestamp > 0) msg.timestamp else System.currentTimeMillis()
+            val protocolIdBytes = msg.protocolMessageId
+            val protocolId = protocolIdBytes?.let(ProtocolMessageId::fromBytes)
+            if (messageType == 0 && protocolId != null && protocolIdBytes != null) {
+                messageRepo.storeReceivedDirectMessage(
+                    senderId = senderHex,
+                    protocolMessageId = protocolId,
+                    timestamp = timestamp,
+                    content = String(msg.content, Charsets.UTF_8)
+                )
+                ReceiptAcknowledgementRequest(msg.senderId.copyOf(), protocolIdBytes.copyOf())
+            } else {
+                val conversationId = if (messageType == 6) {
                     val channelId = ((msg.conversationId[0].toInt() and 0xFF) shl 24) or
                             ((msg.conversationId[1].toInt() and 0xFF) shl 16) or
                             ((msg.conversationId[2].toInt() and 0xFF) shl 8) or
                             (msg.conversationId[3].toInt() and 0xFF)
                     "channel_$channelId"
                 } else {
-                    senderHex   // <-- peer node id = the 1:1 chat key
+                    senderHex
                 }
                 messageRepo.insertReceivedMessage(
-                    messageId      = UUID.randomUUID().toString(),
+                    messageId = UUID.randomUUID().toString(),
                     conversationId = conversationId,
-                    senderId       = senderHex,
-                    timestamp      = if (msg.timestamp > 0) msg.timestamp else System.currentTimeMillis(),
-                    type           = msg.messageType.toInt() and 0xFF,
-                    content        = String(msg.content, Charsets.UTF_8)
+                    senderId = senderHex,
+                    timestamp = timestamp,
+                    type = messageType,
+                    content = String(msg.content, Charsets.UTF_8)
                 )
-            } catch (e: Exception) {
-                // Log silently - don't crash the radio receive path
+                null
             }
+        } catch (_: Exception) {
+            // Never acknowledge a message that was not durably stored.
+            null
+        }
+    }
+
+    /** Called only after Rust signature, decryption, and binding checks pass. */
+    fun onMessageAcknowledged(protocolMessageId: ByteArray, ackSender: ByteArray) {
+        val protocolId = ProtocolMessageId.fromBytes(protocolMessageId) ?: return
+        val senderHex = ackSender.joinToString("") { "%02x".format(it) }
+        scope.launch {
+            messageRepo.markRemoteReceived(protocolId, senderHex)
         }
     }
 
@@ -118,10 +141,15 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
         isServiceConnected.value = activeService != null
     }
 
-    override fun onServiceDisconnected(name: ComponentName?) {
+        override fun onServiceDisconnected(name: ComponentName?) {
         activeService?.setConnection(null)
         activeService = null
         activeServiceFlow.value = null
         isServiceConnected.value = false
     }
 }
+
+data class ReceiptAcknowledgementRequest(
+    val originalSender: ByteArray,
+    val protocolMessageId: ByteArray
+)

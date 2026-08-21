@@ -1,6 +1,7 @@
 package com.rezvani.mesh.data.repositories
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.rezvani.mesh.data.AppDatabase
 import com.rezvani.mesh.data.dao.MessageDao
 import com.rezvani.mesh.data.entities.MessageEntity
@@ -10,64 +11,108 @@ import kotlinx.coroutines.flow.map
 import java.util.UUID
 
 /**
- * Repository for managing message data.
- * Provides a clean API for the UI layer to observe and modify messages.
+ * Repository for persisted messages. Gate 1 keeps the local primary key and
+ * the wire protocol ID separate: local IDs are UI/database implementation
+ * details while protocol IDs are immutable, 16-byte end-to-end identities.
  */
 class MessageRepository(context: Context, passphrase: ByteArray) {
 
-    private val messageDao: MessageDao = AppDatabase.getInstance(context, passphrase).messageDao()
+    private val database = AppDatabase.getInstance(context, passphrase)
+    private val messageDao: MessageDao = database.messageDao()
 
-    /**
-     * Flow of all conversation IDs, ordered by most recent activity.
-     */
     fun getConversationIds(): Flow<List<String>> = messageDao.getConversationIds()
 
-    /**
-     * Flow of messages for a specific conversation.
-     */
     fun getMessages(conversationId: String): Flow<List<MessageEntity>> =
         messageDao.getMessagesForConversation(conversationId)
 
-    /**
-     * Flow of the last message in a conversation.
-     */
     fun getLastMessage(conversationId: String): Flow<MessageEntity?> =
         messageDao.getMessagesForConversation(conversationId).map { messages ->
             messages.maxByOrNull { it.timestamp }
         }
 
-    /**
-     * Flow of unread count for a conversation.
-     */
     fun getUnreadCount(conversationId: String): Flow<Int> =
         messageDao.getUnreadCountFlow(conversationId)
 
-    /**
-     * Inserts a new text message.
-     */
+    /** Legacy/general text insert. Direct Gate 1 sends use [insertDirectTextMessage]. */
     suspend fun insertTextMessage(
         conversationId: String,
         text: String,
         isOutgoing: Boolean
     ): String {
         val messageId = UUID.randomUUID().toString()
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderId = "", // Will be set by native core
-            timestamp = System.currentTimeMillis(),
-            type = 0, // TEXT
-            content = text,
-            isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
+        messageDao.insert(
+            MessageEntity(
+                id = messageId,
+                conversationId = conversationId,
+                senderId = "",
+                timestamp = System.currentTimeMillis(),
+                type = 0,
+                content = text,
+                isOutgoing = isOutgoing,
+                status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.REMOTE_RECEIVED
+            )
         )
-        messageDao.insert(message)
         return messageId
     }
 
     /**
-     * Inserts a voice message.
+     * Creates and commits an outgoing Gate 1 direct message before native
+     * submission. Retrying this row must reuse [MessageEntity.protocolMessageId].
      */
+    suspend fun insertDirectTextMessage(
+        conversationId: String,
+        recipientNodeId: String,
+        text: String
+    ): MessageEntity {
+        val localId = UUID.randomUUID().toString()
+        val protocolMessageId = ProtocolMessageId.generateHex()
+        val message = MessageEntity(
+            id = localId,
+            conversationId = conversationId,
+            senderId = "",
+            timestamp = System.currentTimeMillis(),
+            type = 0,
+            content = text,
+            isOutgoing = true,
+            status = MessageStatus.QUEUED,
+            protocolMessageId = protocolMessageId,
+            recipientNodeId = recipientNodeId
+        )
+        messageDao.insert(message)
+        return message
+    }
+
+    /**
+     * Atomically stores an inbound Gate 1 direct message. A duplicate from the
+     * same sender and protocol ID is not displayed twice but remains eligible
+     * for an acknowledgement retry after the caller sees [inserted] = false.
+     */
+    suspend fun storeReceivedDirectMessage(
+        senderId: String,
+        protocolMessageId: String,
+        timestamp: Long,
+        content: String
+    ): InboundDirectMessageResult = database.withTransaction {
+        val existing = messageDao.findBySenderAndProtocolMessageId(senderId, protocolMessageId)
+        if (existing != null) {
+            InboundDirectMessageResult(inserted = false, localMessageId = existing.id)
+        } else {
+            val message = MessageEntity(
+                id = UUID.randomUUID().toString(),
+                conversationId = senderId,
+                senderId = senderId,
+                timestamp = timestamp,
+                type = 0,
+                content = content,
+                isOutgoing = false,
+                status = MessageStatus.REMOTE_RECEIVED,
+                protocolMessageId = protocolMessageId
+            )
+            messageDao.insert(message)
+            InboundDirectMessageResult(inserted = true, localMessageId = message.id)
+        }
+    }
+
     suspend fun insertVoiceMessage(
         conversationId: String,
         filePath: String,
@@ -76,23 +121,21 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
     ): String {
         val messageId = UUID.randomUUID().toString()
         val content = "$filePath|$durationSeconds"
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderId = "",
-            timestamp = System.currentTimeMillis(),
-            type = 1, // VOICE
-            content = content,
-            isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
+        messageDao.insert(
+            MessageEntity(
+                id = messageId,
+                conversationId = conversationId,
+                senderId = "",
+                timestamp = System.currentTimeMillis(),
+                type = 1,
+                content = content,
+                isOutgoing = isOutgoing,
+                status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.REMOTE_RECEIVED
+            )
         )
-        messageDao.insert(message)
         return messageId
     }
 
-    /**
-     * Inserts a file message (metadata).
-     */
     suspend fun insertFileMessage(
         conversationId: String,
         fileName: String,
@@ -103,23 +146,22 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
     ): String {
         val messageId = UUID.randomUUID().toString()
         val content = "$fileName|$fileSize|$mimeType|$filePath"
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderId = "",
-            timestamp = System.currentTimeMillis(),
-            type = 2, // FILE_METADATA
-            content = content,
-            isOutgoing = isOutgoing,
-            status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.DELIVERED
+        messageDao.insert(
+            MessageEntity(
+                id = messageId,
+                conversationId = conversationId,
+                senderId = "",
+                timestamp = System.currentTimeMillis(),
+                type = 2,
+                content = content,
+                isOutgoing = isOutgoing,
+                status = if (isOutgoing) MessageStatus.QUEUED else MessageStatus.REMOTE_RECEIVED
+            )
         )
-        messageDao.insert(message)
         return messageId
     }
 
-    /**
-     * Inserts a received message (from broadcast).
-     */
+    /** Inserts a non-Gate-1 received channel, emergency, or legacy message. */
     suspend fun insertReceivedMessage(
         messageId: String,
         conversationId: String,
@@ -128,62 +170,77 @@ class MessageRepository(context: Context, passphrase: ByteArray) {
         type: Int,
         content: String
     ) {
-        val message = MessageEntity(
-            id = messageId,
-            conversationId = conversationId,
-            senderId = senderId,
-            timestamp = timestamp,
-            type = type,
-            content = content,
-            isOutgoing = false,
-            status = MessageStatus.DELIVERED
+        messageDao.insert(
+            MessageEntity(
+                id = messageId,
+                conversationId = conversationId,
+                senderId = senderId,
+                timestamp = timestamp,
+                type = type,
+                content = content,
+                isOutgoing = false,
+                status = MessageStatus.REMOTE_RECEIVED
+            )
         )
-        messageDao.insert(message)
     }
 
-    /**
-     * Updates message status.
-     */
+    /** Returns true only when an authenticated ACK matches an outgoing message and peer. */
+    suspend fun markRemoteReceived(
+        protocolMessageId: String,
+        ackSenderId: String,
+        receivedAtMs: Long = System.currentTimeMillis()
+    ): Boolean = messageDao.markRemoteReceived(
+        protocolMessageId = protocolMessageId,
+        ackSenderId = ackSenderId,
+        receivedAtMs = receivedAtMs,
+        remoteReceivedStatus = MessageStatus.REMOTE_RECEIVED
+    ) > 0
+
     suspend fun updateStatus(messageId: String, status: Int) {
         messageDao.updateStatus(messageId, status)
     }
 
-    /**
-     * Marks all messages in a conversation as read.
-     */
     suspend fun markConversationAsRead(conversationId: String) {
         messageDao.markAllAsRead(conversationId)
     }
 
-    /**
-     * Deletes a specific message.
-     */
     suspend fun deleteMessage(messageId: String) {
         messageDao.deleteById(messageId)
     }
 
-    /**
-     * Deletes an entire conversation.
-     */
     suspend fun deleteConversation(conversationId: String) {
         messageDao.deleteConversation(conversationId)
     }
 
-    /**
-     * Deletes messages older than the specified timestamp.
-     */
-    suspend fun cleanupOldMessages(olderThan: Long): Int {
-        return messageDao.deleteMessagesOlderThan(olderThan)
-    }
+    suspend fun cleanupOldMessages(olderThan: Long): Int =
+        messageDao.deleteMessagesOlderThan(olderThan)
 
-    /**
-     * Gets paginated messages for a conversation.
-     */
     suspend fun getMessagesPaginated(
         conversationId: String,
         limit: Int = 50,
         offset: Int = 0
-    ): List<MessageEntity> {
-        return messageDao.getMessagesPaginated(conversationId, limit, offset)
+    ): List<MessageEntity> = messageDao.getMessagesPaginated(conversationId, limit, offset)
+}
+
+data class InboundDirectMessageResult(
+    val inserted: Boolean,
+    val localMessageId: String
+)
+
+object ProtocolMessageId {
+    private val hexPattern = Regex("^[0-9a-f]{32}$")
+
+    fun generateHex(): String = UUID.randomUUID().toString().replace("-", "")
+
+    fun toBytes(hex: String): ByteArray? {
+        if (!hexPattern.matches(hex)) return null
+        return ByteArray(16) { index ->
+            hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+    }
+
+    fun fromBytes(bytes: ByteArray): String? {
+        if (bytes.size != 16) return null
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 }

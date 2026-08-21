@@ -3,6 +3,114 @@
 use sha2::{Sha256, Digest};
 
 pub type NodeId = [u8; 8];
+pub type MessageId = [u8; 16];
+
+/// Gate 1 direct-message acknowledgement packet type. The outer packet is
+/// signed; its payload is encrypted with the existing pairwise session.
+pub const PACKET_TYPE_MESSAGE_ACK: u8 = 0x07;
+pub const DIRECT_ENVELOPE_MAGIC: [u8; 2] = *b"RM";
+pub const DIRECT_ENVELOPE_VERSION: u8 = 0x01;
+pub const ACK_ENVELOPE_MAGIC: [u8; 2] = *b"RA";
+pub const ACK_ENVELOPE_VERSION: u8 = 0x01;
+pub const ACK_CODE_RECEIVED: u8 = 0x01;
+pub const CAPABILITY_FORMAT_VERSION: u8 = 0x01;
+pub const CAP_MESSAGE_ID_AND_ACK: u32 = 1;
+
+/// Encrypted payload carried by a Gate 1 direct-message packet. The message
+/// identity is inside the existing Olm ciphertext so relays cannot correlate
+/// messages by identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectMessageEnvelopeV1 {
+    pub message_kind: u8,
+    pub message_id: MessageId,
+    pub created_at_ms: u64,
+    pub body: Vec<u8>,
+}
+
+impl DirectMessageEnvelopeV1 {
+    pub const HEADER_SIZE: usize = 32;
+
+    pub fn serialize(&self) -> Option<Vec<u8>> {
+        if self.message_kind != 0 || self.message_id == [0u8; 16] {
+            return None;
+        }
+        let body_len: u32 = self.body.len().try_into().ok()?;
+        let mut out = Vec::with_capacity(Self::HEADER_SIZE + self.body.len());
+        out.extend_from_slice(&DIRECT_ENVELOPE_MAGIC);
+        out.push(DIRECT_ENVELOPE_VERSION);
+        out.push(self.message_kind);
+        out.extend_from_slice(&self.message_id);
+        out.extend_from_slice(&self.created_at_ms.to_be_bytes());
+        out.extend_from_slice(&body_len.to_be_bytes());
+        out.extend_from_slice(&self.body);
+        Some(out)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Option<Self> {
+        if data.len() < Self::HEADER_SIZE || data[0..2] != DIRECT_ENVELOPE_MAGIC {
+            return None;
+        }
+        if data[2] != DIRECT_ENVELOPE_VERSION || data[3] != 0 {
+            return None;
+        }
+        let mut message_id = [0u8; 16];
+        message_id.copy_from_slice(&data[4..20]);
+        if message_id == [0u8; 16] {
+            return None;
+        }
+        let created_at_ms = u64::from_be_bytes(data[20..28].try_into().ok()?);
+        let body_len = u32::from_be_bytes(data[28..32].try_into().ok()?) as usize;
+        if data.len() != Self::HEADER_SIZE.checked_add(body_len)? {
+            return None;
+        }
+        let body = data[32..].to_vec();
+        std::str::from_utf8(&body).ok()?;
+        Some(Self { message_kind: 0, message_id, created_at_ms, body })
+    }
+}
+
+/// Exact encrypted acknowledgement payload for a persisted direct message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageAckEnvelopeV1 {
+    pub message_id: MessageId,
+    pub original_sender: NodeId,
+    pub original_recipient: NodeId,
+    pub created_at_ms: u64,
+}
+
+impl MessageAckEnvelopeV1 {
+    pub const SIZE: usize = 44;
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(Self::SIZE);
+        out.extend_from_slice(&ACK_ENVELOPE_MAGIC);
+        out.push(ACK_ENVELOPE_VERSION);
+        out.push(ACK_CODE_RECEIVED);
+        out.extend_from_slice(&self.message_id);
+        out.extend_from_slice(&self.original_sender);
+        out.extend_from_slice(&self.original_recipient);
+        out.extend_from_slice(&self.created_at_ms.to_be_bytes());
+        out
+    }
+
+    pub fn deserialize(data: &[u8]) -> Option<Self> {
+        if data.len() != Self::SIZE || data[0..2] != ACK_ENVELOPE_MAGIC ||
+            data[2] != ACK_ENVELOPE_VERSION || data[3] != ACK_CODE_RECEIVED {
+            return None;
+        }
+        let mut message_id = [0u8; 16];
+        message_id.copy_from_slice(&data[4..20]);
+        if message_id == [0u8; 16] {
+            return None;
+        }
+        let mut original_sender = [0u8; 8];
+        original_sender.copy_from_slice(&data[20..28]);
+        let mut original_recipient = [0u8; 8];
+        original_recipient.copy_from_slice(&data[28..36]);
+        let created_at_ms = u64::from_be_bytes(data[36..44].try_into().ok()?);
+        Some(Self { message_id, original_sender, original_recipient, created_at_ms })
+    }
+}
 
 pub fn compute_node_id(public_key: &[u8; 32]) -> NodeId {
     let hash = Sha256::digest(public_key);
@@ -163,6 +271,9 @@ pub struct DecryptedMessage {
     pub sender_id: NodeId,
     pub timestamp: u64,
     pub message_type: u8,
+    /// Present only for Gate 1 direct messages. Legacy messages deliberately
+    /// remain without a protocol identity and cannot generate acknowledgements.
+    pub protocol_message_id: Option<MessageId>,
     pub content: Vec<u8>,
 }
 
@@ -176,6 +287,13 @@ impl DecryptedMessage {
         buf.push(self.message_type);
         buf.extend_from_slice(&content_len);
         buf.extend_from_slice(&self.content);
+        match self.protocol_message_id {
+            Some(id) => {
+                buf.push(1);
+                buf.extend_from_slice(&id);
+            }
+            None => buf.push(0),
+        }
         buf
     }
 
@@ -188,9 +306,20 @@ impl DecryptedMessage {
         let timestamp = u64::from_be_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]);
         let message_type = data[32];
         let content_len = u32::from_be_bytes([data[33], data[34], data[35], data[36]]) as usize;
-        if data.len() < 37 + content_len { return None; }
-        let content = data[37..37+content_len].to_vec();
-        Some(Self { conversation_id, sender_id, timestamp, message_type, content })
+        if data.len() < 37 + content_len + 1 { return None; }
+        let content_end = 37 + content_len;
+        let content = data[37..content_end].to_vec();
+        let id_present = data[content_end];
+        let protocol_message_id = match id_present {
+            0 if data.len() == content_end + 1 => None,
+            1 if data.len() == content_end + 17 => {
+                let mut id = [0u8; 16];
+                id.copy_from_slice(&data[content_end + 1..content_end + 17]);
+                Some(id)
+            }
+            _ => return None,
+        };
+        Some(Self { conversation_id, sender_id, timestamp, message_type, protocol_message_id, content })
     }
 }
 
@@ -427,11 +556,56 @@ mod tests {
             sender_id: [2; 8],
             timestamp: 99999,
             message_type: 0,
+            protocol_message_id: Some([9; 16]),
             content: b"hello mesh".to_vec(),
         };
         let ser = msg.serialize();
         let deser = DecryptedMessage::deserialize(&ser).unwrap();
         assert_eq!(msg, deser);
+    }
+
+    #[test]
+    fn test_gate1_direct_envelope_roundtrip() {
+        let envelope = DirectMessageEnvelopeV1 {
+            message_kind: 0,
+            message_id: [0xA5; 16],
+            created_at_ms: 1_700_000_000_000,
+            body: b"hello mesh".to_vec(),
+        };
+        let wire = envelope.serialize().unwrap();
+        assert_eq!(DirectMessageEnvelopeV1::deserialize(&wire), Some(envelope));
+    }
+
+    #[test]
+    fn test_gate1_direct_envelope_rejects_bad_length_and_zero_id() {
+        let bad_id = DirectMessageEnvelopeV1 {
+            message_kind: 0,
+            message_id: [0; 16],
+            created_at_ms: 1,
+            body: b"x".to_vec(),
+        };
+        assert!(bad_id.serialize().is_none());
+        let mut wire = DirectMessageEnvelopeV1 {
+            message_kind: 0,
+            message_id: [1; 16],
+            created_at_ms: 1,
+            body: b"x".to_vec(),
+        }.serialize().unwrap();
+        wire[31] = 2;
+        assert!(DirectMessageEnvelopeV1::deserialize(&wire).is_none());
+    }
+
+    #[test]
+    fn test_gate1_ack_envelope_roundtrip() {
+        let ack = MessageAckEnvelopeV1 {
+            message_id: [0xA5; 16],
+            original_sender: [1; 8],
+            original_recipient: [2; 8],
+            created_at_ms: 42,
+        };
+        let wire = ack.serialize();
+        assert_eq!(wire.len(), MessageAckEnvelopeV1::SIZE);
+        assert_eq!(MessageAckEnvelopeV1::deserialize(&wire), Some(ack));
     }
 
     #[test]

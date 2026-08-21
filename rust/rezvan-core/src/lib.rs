@@ -155,6 +155,90 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendMessage(
 /// 1:1 Olm-encrypted path). Encrypting to the null NodeId has no
 /// established session, so that call silently failed and returned no
 /// actions -- emergency broadcasts never actually transmitted anything.
+/// Gate 1 direct send. The message ID is created and durably stored by
+/// Android before this call; the engine selects a legacy payload fallback when
+/// the recipient has not advertised acknowledgement capability.
+#[no_mangle]
+pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendMessageV1(
+    mut env: JNIEnv,
+    _class: JClass,
+    core_ptr: jlong,
+    recipient_id: JByteArray,
+    message_id: JByteArray,
+    created_at_ms: jlong,
+    message_kind: jint,
+    body: JByteArray,
+) -> jbyteArray {
+    let engine = unsafe { &mut *(core_ptr as *mut MeshEngine) };
+    let recipient = match jbytearray_to_array::<8>(&mut env, &recipient_id) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let message_id = match jbytearray_to_array::<16>(&mut env, &message_id) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let body = match jbytearray_to_vec(&mut env, &body) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let actions = engine.send_message_v1(
+        &recipient,
+        message_id,
+        created_at_ms.max(0) as u64,
+        message_kind as u8,
+        &body,
+    );
+    if actions.is_empty() {
+        return std::ptr::null_mut();
+    }
+    vec_to_jbytearray(&mut env, &action::serialize_actions(&actions))
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// Creates a signed encrypted Gate 1 receipt acknowledgement. Android MUST
+/// call this only after the matching inbound message row was committed.
+#[no_mangle]
+pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeBuildMessageReceivedAck(
+    mut env: JNIEnv,
+    _class: JClass,
+    core_ptr: jlong,
+    original_sender: JByteArray,
+    message_id: JByteArray,
+    created_at_ms: jlong,
+) -> jbyteArray {
+    let engine = unsafe { &mut *(core_ptr as *mut MeshEngine) };
+    let original_sender = match jbytearray_to_array::<8>(&mut env, &original_sender) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let message_id = match jbytearray_to_array::<16>(&mut env, &message_id) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let actions = engine.build_received_ack(&original_sender, message_id, created_at_ms.max(0) as u64);
+    if actions.is_empty() {
+        return std::ptr::null_mut();
+    }
+    vec_to_jbytearray(&mut env, &action::serialize_actions(&actions))
+        .unwrap_or(std::ptr::null_mut())
+}
+
 #[no_mangle]
 pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendBroadcast(
     mut env: JNIEnv,

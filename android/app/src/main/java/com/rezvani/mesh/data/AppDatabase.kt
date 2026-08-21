@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.rezvani.mesh.data.dao.ChannelDao
 import com.rezvani.mesh.data.dao.ContactDao
 import com.rezvani.mesh.data.dao.MessageDao
@@ -22,7 +24,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         ContactEntity::class,
         ChannelEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -36,6 +38,19 @@ abstract class AppDatabase : RoomDatabase() {
 
         private const val DATABASE_NAME = "rezvan_mesh.db"
         private const val KEY_ALIAS = "rezvan_db_key"
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN protocolMessageId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN recipientNodeId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN remoteReceivedAtMs INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN remoteAckSenderId TEXT")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_messages_senderId_protocolMessageId " +
+                        "ON messages(senderId, protocolMessageId)"
+                )
+            }
+        }
 
         /**
          * Gets the database instance.
@@ -117,6 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .openHelperFactory(factory)
+                .addMigrations(MIGRATION_1_2)
                 .build()
         }
 

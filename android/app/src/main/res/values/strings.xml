@@ -108,6 +108,8 @@
     <string name="no_peers_yet">No peers yet</string>
     <string name="nearby_count">%1$d nearby</string>
     <string name="status_queued">Queued locally</string>
+    <string name="status_local_transport_accepted">Queued for local mesh transport</string>
+    <string name="status_remote_received">Received by recipient device</string>
     <string name="status_delivered">Delivered</string>
     <string name="status_sent">Sent</string>
     <string name="status_failed_to_queue">Failed to queue</string>

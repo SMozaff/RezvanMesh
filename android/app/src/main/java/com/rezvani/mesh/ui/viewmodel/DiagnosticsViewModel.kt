@@ -638,8 +638,8 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             val bundle2 = MeshCore.nativeGetKeyBundle(ptr)
                 ?: return false to (log.toString() + "FAIL: nativeGetKeyBundle returned null (2nd call)")
 
-            if (bundle1.size != 164 || bundle2.size != 164) {
-                return false to (log.toString() + "FAIL: bundle size != 164 (got ${bundle1.size}, ${bundle2.size})")
+            if (bundle1.size != 169 || bundle2.size != 169) {
+                return false to (log.toString() + "FAIL: bundle size != 169 (got ${bundle1.size}, ${bundle2.size})")
             }
 
             val identity1 = bundle1.copyOfRange(0, 32)
@@ -654,6 +654,8 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             // rotates; the epoch key only changes via advance_epoch()).
             val epochFields1 = bundle1.copyOfRange(128, 164)
             val epochFields2 = bundle2.copyOfRange(128, 164)
+            val capabilityFields1 = bundle1.copyOfRange(164, 169)
+            val capabilityFields2 = bundle2.copyOfRange(164, 169)
 
             if (!identity1.contentEquals(identity2)) {
                 return false to (log.toString() + "FAIL: Olm identity key changed between calls (should be stable)")
@@ -663,6 +665,9 @@ class DiagnosticsViewModel(application: Application) : AndroidViewModel(applicat
             }
             if (!epochFields1.contentEquals(epochFields2)) {
                 return false to (log.toString() + "FAIL: beacon epoch key/number changed between calls (should be stable until advance_epoch())")
+            }
+            if (!capabilityFields1.contentEquals(capabilityFields2) || capabilityFields1[0].toInt() != 1 || capabilityFields1[4].toInt() != 1) {
+                return false to (log.toString() + "FAIL: Gate 1 capability extension missing or unstable")
             }
             log.append("- Olm identity key, mesh identity keys, and epoch key/number all stable across calls\n")
 

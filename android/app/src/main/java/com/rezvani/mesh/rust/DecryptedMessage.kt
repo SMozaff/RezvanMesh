@@ -5,5 +5,6 @@ data class DecryptedMessage(
     val senderId: ByteArray,
     val timestamp: Long,
     val messageType: Byte,
+    val protocolMessageId: ByteArray?,
     val content: ByteArray
 )

@@ -1,4 +1,4 @@
-use rezvan_common::{DecryptedMessage, NodeId};
+use rezvan_common::{DecryptedMessage, MessageId, NodeId};
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -28,6 +28,10 @@ pub enum Action {
 
     /// Diagnostic log entry – surfaced to Kotlin for in‑app display.
     DiagLog { tag: String, level: u8, message: String },
+
+    /// A signed, encrypted Gate 1 acknowledgement matched an outbound message.
+    /// Kotlin must still match this tuple against a persisted outbound record.
+    MessageAcknowledged { message_id: MessageId, ack_sender: NodeId },
 }
 
 /// Broadcast sentinel for `Action::SendBlePacket::target` -- send to every
@@ -91,7 +95,13 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) {
             payload.extend_from_slice(&(tag_bytes.len() as u16).to_be_bytes());
             payload.extend_from_slice(tag_bytes);
             payload.extend_from_slice(&(msg_bytes.len() as u16).to_be_bytes());
-            payload.extend_from_slice(msg_bytes);
+            write_payload(buf, &payload);
+        }
+        Action::MessageAcknowledged { message_id, ack_sender } => {
+            buf.push(0x07);
+            let mut payload = Vec::with_capacity(24);
+            payload.extend_from_slice(message_id);
+            payload.extend_from_slice(ack_sender);
             write_payload(buf, &payload);
         }
     }
@@ -193,6 +203,7 @@ mod tests {
             sender_id: [0x02; 8],
             timestamp: 12345,
             message_type: 0,
+            protocol_message_id: None,
             content: vec![0xAA; 10],
         };
         let actions = vec![Action::NotifyUi {
