@@ -5,12 +5,37 @@ import android.util.Log
 object MeshCore {
     private const val TAG = "MeshCore"
 
+    @Volatile
+    private var nativeLoadFailure: UnsatisfiedLinkError? = null
+
     init {
         try {
             System.loadLibrary("rezvan_core")
             Log.i(TAG, "Native library loaded successfully")
         } catch (e: UnsatisfiedLinkError) {
+            nativeLoadFailure = e
             Log.e(TAG, "Failed to load native library", e)
+        }
+    }
+
+    /** True only when the native library was loaded successfully. */
+    @JvmStatic
+    fun isNativeLibraryLoaded(): Boolean = nativeLoadFailure == null
+
+    /**
+     * Initializes the engine without allowing a broken/stale JNI library to
+     * crash the service process. This also catches a library that loads but
+     * does not export the current JNI method set.
+     */
+    @JvmStatic
+    fun tryNativeInit(seed: ByteArray, storagePath: String): Long? {
+        if (nativeLoadFailure != null) return null
+        return try {
+            nativeInit(seed, storagePath)
+        } catch (e: UnsatisfiedLinkError) {
+            nativeLoadFailure = e
+            Log.e(TAG, "Native JNI initialization is unavailable", e)
+            null
         }
     }
 

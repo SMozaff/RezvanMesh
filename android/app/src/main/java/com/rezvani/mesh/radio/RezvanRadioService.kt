@@ -131,7 +131,16 @@ class RezvanRadioService : Service() {
     private fun initMeshEngine(seed: ByteArray) {
         if (enginePtr != 0L) return
         try {
-            enginePtr = com.rezvani.mesh.MeshCore.nativeInit(seed, filesDir.absolutePath)
+            val initializedPtr = com.rezvani.mesh.MeshCore.tryNativeInit(seed, filesDir.absolutePath)
+            if (initializedPtr == null || initializedPtr == 0L) {
+                DiagLogger.err(
+                    "SERVICE",
+                    "Mesh engine unavailable: native JNI symbols are missing or the library failed to load"
+                )
+                MeshServiceConnection.meshCorePtr.value = 0L
+                return
+            }
+            enginePtr = initializedPtr
             // Canonical Node ID comes from the engine itself (SHA-256 of the
             // derived Ed25519 public key) -- this is the exact value the
             // engine puts in the `originator` field of every packet it sends.

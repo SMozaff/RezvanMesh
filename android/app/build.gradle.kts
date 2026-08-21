@@ -127,6 +127,26 @@ kotlin {
     }
 }
 
+val requiredNativeAbis = listOf("arm64-v8a", "armeabi-v7a")
+val verifyNativeLibraries = tasks.register("verifyNativeLibraries") {
+    group = "verification"
+    description = "Fails the build when the Rust JNI libraries are absent from the APK source tree."
+    doLast {
+        val missing = requiredNativeAbis.mapNotNull { abi ->
+            val library = project.file("src/main/jniLibs/$abi/librezvan_core.so")
+            if (library.isFile && library.length() > 0L) null else library.path
+        }
+        check(missing.isEmpty()) {
+            "Missing Rust JNI libraries: ${missing.joinToString()}. " +
+                "Run scripts/build_rust.sh before assembling the APK."
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(verifyNativeLibraries)
+}
+
 dependencies {
     // Kotlin -- version should track the Kotlin Gradle plugin version
     // declared in the root build.gradle.kts (2.2.20, stepped back through 2.3.0 and 2.2.21 from an
