@@ -2,70 +2,78 @@ package com.rezvani.mesh.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// =====================================================================
-// REZVAN MESH - Brand palette (spec section 2)
-// Canonical names below; legacy aliases at the bottom keep existing
-// screens compiling unchanged while the values shift to the new system.
-// =====================================================================
+/**
+ * RezvanMesh visual system.
+ *
+ * The dark palette is intentionally restrained: graphite surfaces carry the
+ * interface, neon mesh green communicates healthy/active states, blue is
+ * reserved for transport and technology affordances, amber is caution, and
+ * red is reserved for emergency/failed states.
+ */
 
-// ---- Base Emissive Palette (Default Dark) ----
-val MeshCyan      = Color(0xFF19D3F3) // Primary Mesh Cyan
-val DeepMesh      = Color(0xFF0A7F9D) // Deep Mesh
-val SignalBlue    = Color(0xFF4EC9FF) // Signal Blue
-val Graphite      = Color(0xFF15181C) // Surface
-val Slate         = Color(0xFF22272E) // Sub-surface
-val Steel         = Color(0xFF39424E) // Borders
-val GraphiteDeep  = Color(0xFF101317) // App background (one step below surface)
-val SteelDim      = Color(0xFF2B323B) // Low-opacity border variant
+// ---- Neon Mesh palette -------------------------------------------------
+val MeshGreen       = Color(0xFF7CFF55)
+val MeshGreenBright = Color(0xFF9BFF78)
+val DeepMesh        = Color(0xFF285F32)
+val MeshGreenDim    = Color(0xFF163A20)
 
-val TextHigh      = Color(0xFFE2E8EC) // Primary text on dark
-val TextMute      = Color(0xFF93A1AD) // Secondary text on dark
-val TextDim       = Color(0xFF6B7682) // Tertiary/disabled text on dark
+// Technology and transport accents.
+val SignalBlue      = Color(0xFF58A6FF)
+val SignalBlueDim   = Color(0xFF173A5F)
+val MeshPurple      = Color(0xFFB77CFF)
 
-// ---- Semantic (shared) ----
-val SemSuccess      = Color(0xFF22C55E)
-val SemWarning      = Color(0xFFF59E0B)
-val SemCritical     = Color(0xFFEF4444)
-val SemCriticalDark = Color(0xFFB91C1C)
+// Dark graphite surfaces.
+val GraphiteDeep    = Color(0xFF05090A)
+val Graphite        = Color(0xFF0B1113)
+val Slate           = Color(0xFF11191B)
+val Steel           = Color(0xFF263336)
+val SteelDim        = Color(0xFF1A2527)
+val SteelBright     = Color(0xFF3A4A4D)
 
-// ---- Incident Daylight Palette (High-Contrast Fallback) ----
-val BoneSurface     = Color(0xFFF4F5F6) // Muted Bone surface
-val BoneBackground  = Color(0xFFECEEF0)
-val BoneVariant     = Color(0xFFE1E5E9)
-val IndustrialGrey  = Color(0xFFC5CBD3) // Borders
-val DeepInk         = Color(0xFF085F75) // Primary Ink (Deep Ink Blue)
-val InkHigh         = Color(0xFF0E1418)
-val InkMute         = Color(0xFF4A5560)
-val InkDim          = Color(0xFF8A95A0)
+// Text hierarchy for the dark experience.
+val TextHigh        = Color(0xFFF2F6F3)
+val TextMute        = Color(0xFFA7B2AD)
+val TextDim         = Color(0xFF6E7B75)
 
-// =====================================================================
-// Legacy aliases - DO NOT REMOVE. Screens reference these names directly.
-// They now resolve to the brand palette above.
-// =====================================================================
+// Semantic states.
+val SemSuccess      = MeshGreen
+val SemWarning      = Color(0xFFFFC857)
+val SemCritical     = Color(0xFFFF4D5A)
+val SemCriticalDark = Color(0xFFB52838)
+
+// ---- Incident daylight palette ----------------------------------------
+val BoneSurface     = Color(0xFFF5F8F5)
+val BoneBackground  = Color(0xFFEAF0EB)
+val BoneVariant     = Color(0xFFDCE7DE)
+val IndustrialGrey  = Color(0xFFB8C6BC)
+val DeepInk         = Color(0xFF216B2C)
+val InkHigh         = Color(0xFF0D1710)
+val InkMute         = Color(0xFF526158)
+val InkDim          = Color(0xFF7C8A80)
+
+// ---- Compatibility aliases --------------------------------------------
+// Existing screens use these names. Keep them stable while routing them
+// through the new visual system so the palette can be migrated incrementally.
+val MeshCyan            = MeshGreen
 val DarkBackground      = GraphiteDeep
 val DarkSurface         = Graphite
 val DarkSurfaceVariant  = Slate
 val DarkBorder          = Steel
-
-val PrimaryGreen        = MeshCyan      // (name retained for compatibility; now Mesh Cyan)
-val PrimaryGreenHover   = SignalBlue
+val PrimaryGreen        = MeshGreen
+val PrimaryGreenHover   = MeshGreenBright
 val PrimaryGreenDark    = DeepMesh
-
 val DangerRed           = SemCritical
 val SuccessGreen        = SemSuccess
 val WarningOrange       = SemWarning
-
 val TextWhite           = Color(0xFFFFFFFF)
 val TextPrimaryDark     = TextHigh
 val TextMutedDark       = TextMute
 val TextDimDark         = TextDim
 val ErrorContainerDark  = SemCritical.copy(alpha = 0.15f)
-
 val LightBackground     = BoneBackground
 val LightSurface        = BoneSurface
 val LightSurfaceVariant = BoneVariant
 val LightBorder         = IndustrialGrey
-
 val TextPrimaryLight    = InkHigh
 val TextMutedLight      = InkMute
 val TextDimLight        = InkDim

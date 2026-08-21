@@ -4,13 +4,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
-// Infrastructure-grade geometry (spec section 4): consistent 12px geometric
-// corner radius across components, with tighter/looser steps where Material
-// maps them (chips, sheets).
+/**
+ * Rounded geometry used across cards, sheets, inputs, and action surfaces.
+ * The large radius is reserved for primary content panels; compact controls
+ * remain tighter so the hierarchy does not become visually over-rounded.
+ */
 val Shapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small      = RoundedCornerShape(12.dp),
-    medium     = RoundedCornerShape(12.dp),
-    large      = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(20.dp)
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp)
 )
