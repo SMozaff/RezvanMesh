@@ -20,6 +20,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.R
 import com.rezvani.mesh.ui.components.ConfirmationDialog
 import com.rezvani.mesh.ui.components.PowerState
+import com.rezvani.mesh.ui.theme.MeshDimens
+import com.rezvani.mesh.ui.theme.MeshGreen
+import com.rezvani.mesh.ui.theme.MeshPurple
+import com.rezvani.mesh.ui.theme.SemCritical
+import com.rezvani.mesh.ui.theme.SemWarning
+import com.rezvani.mesh.ui.theme.SignalBlue
 import com.rezvani.mesh.ui.viewmodel.SettingsViewModel
 import com.rezvani.mesh.utils.LocaleHelper
 
@@ -49,7 +55,11 @@ fun SettingsScreen(
         topBar = {
             // Settings is a tab destination - no back arrow
             TopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) }
+                title = { Text(stringResource(R.string.settings_title)) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground
+                )
             )
         }
     ) { paddingValues ->
@@ -64,7 +74,8 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.Person,
                     title = stringResource(R.string.node_id),
-                    subtitle = uiState.nodeId
+                    subtitle = uiState.nodeId,
+                    tint = MeshGreen
                 )
             }
 
@@ -75,12 +86,14 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.DarkMode,
                     title = stringResource(R.string.theme),
+                    tint = MeshPurple,
                     subtitle = if (uiState.darkMode) stringResource(R.string.dark) else stringResource(R.string.light),
                     onClick = { viewModel.toggleDarkMode() }
                 )
                 SettingsItem(
                     icon = Icons.Default.Language,
                     title = stringResource(R.string.language),
+                    tint = SignalBlue,
                     subtitle = when (uiState.currentLanguage) {
                         "fa" -> stringResource(R.string.language_farsi)
                         "ar" -> stringResource(R.string.language_arabic)
@@ -99,6 +112,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.Analytics,
                     title = "Advanced Network Monitoring",
+                    tint = MeshGreen,
                     subtitle = "Live radio stats, peers, and diagnostic logs",
                     onClick = { onNavigateToAdvanced?.invoke() }
                 )
@@ -111,6 +125,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Default.BatteryStd,
                     title = stringResource(R.string.power_profile),
+                    tint = SemWarning,
                     subtitle = when (uiState.powerOverride ?: uiState.autoPowerState) {
                         PowerState.EMERGENCY  -> stringResource(R.string.power_emergency)
                         PowerState.ACTIVE     -> stringResource(R.string.power_active)
@@ -152,7 +167,7 @@ fun SettingsScreen(
                     title = stringResource(R.string.clear_old_messages),
                     subtitle = stringResource(R.string.clear_messages_description),
                     onClick = { showClearDataDialog = true },
-                    tint = MaterialTheme.colorScheme.error
+                    tint = SemCritical
                 )
             }
 
@@ -381,12 +396,12 @@ fun SettingsScreen(
 
 @Composable
 fun SettingsSection(title: String, content: @Composable () -> Unit) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+    Column(modifier = Modifier.padding(vertical = MeshDimens.compactGap)) {
         Text(
             text = title,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            modifier = Modifier.padding(horizontal = MeshDimens.screenHorizontal, vertical = MeshDimens.compactGap)
         )
         content()
     }
@@ -402,13 +417,31 @@ fun SettingsItem(
 ) {
     Row(
         modifier = if (onClick != null)
-            Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp)
+            Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(horizontal = MeshDimens.screenHorizontal, vertical = 14.dp)
         else
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = MeshDimens.screenHorizontal, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
-        Spacer(modifier = Modifier.width(16.dp))
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = tint.copy(alpha = 0.14f),
+            modifier = Modifier.size(MeshDimens.iconContainerSmall)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(MeshDimens.itemGap))
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = MaterialTheme.typography.bodyLarge)
             subtitle?.let {
