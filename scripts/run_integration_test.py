@@ -132,6 +132,8 @@ def run_test_case(devices: List[str], test_file: Path) -> bool:
     return True
 
 def main():
+    global APK_PATH
+
     parser = argparse.ArgumentParser(description="Rezvan Mesh Integration Test Runner")
     parser.add_argument("--avds", nargs="+", default=DEFAULT_AVDS, help="AVD names to use")
     parser.add_argument("--devices", nargs="+", help="Use specific device serials (skip emulator launch)")
@@ -140,7 +142,6 @@ def main():
     parser.add_argument("--skip-install", action="store_true", help="Skip APK installation")
     args = parser.parse_args()
 
-    global APK_PATH
     APK_PATH = Path(args.apk)
 
     devices = args.devices
