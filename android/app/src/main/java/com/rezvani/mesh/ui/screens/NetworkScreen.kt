@@ -29,6 +29,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.MeshServiceConnection
 import com.rezvani.mesh.R
+import com.rezvani.mesh.ui.theme.MeshAlpha
+import com.rezvani.mesh.ui.theme.MeshDimens
+import com.rezvani.mesh.ui.theme.MeshGreen
+import com.rezvani.mesh.ui.theme.SemWarning
 import com.rezvani.mesh.ui.viewmodel.PeerUiModel
 import com.rezvani.mesh.ui.viewmodel.StatusViewModel
 import com.rezvani.mesh.utils.BarcodeUtils
@@ -66,17 +70,20 @@ fun NetworkScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(
+                horizontal = MeshDimens.screenHorizontal,
+                vertical = MeshDimens.screenTop
+            ),
+            verticalArrangement = Arrangement.spacedBy(MeshDimens.sectionGap)
         ) {
             if (!batteryUnrestricted) {
                 item { BackgroundReliabilityWarning() }
@@ -164,28 +171,31 @@ private fun isBatteryOptimisationExempt(context: android.content.Context): Boole
 private fun BackgroundReliabilityWarning() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = SemWarning.copy(alpha = 0.14f)
+        )
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(MeshDimens.cardPaddingLarge),
+            horizontalArrangement = Arrangement.spacedBy(MeshDimens.itemGap),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
                 imageVector = Icons.Default.BatteryAlert,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onTertiaryContainer
+                tint = SemWarning
             )
             Column {
                 Text(
                     stringResource(R.string.background_reliability_limited),
                     style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                    color = SemWarning
                 )
                 Text(
                     stringResource(R.string.background_reliability_description),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                    color = SemWarning
                 )
             }
         }
@@ -201,8 +211,8 @@ fun BatteryStatusChip(level: Int, charging: Boolean) {
         else -> MaterialTheme.colorScheme.primary
     }
     Surface(
-        shape = MaterialTheme.shapes.small,
-        color = color.copy(alpha = 0.12f)
+        shape = MaterialTheme.shapes.extraLarge,
+        color = color.copy(alpha = 0.14f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -319,11 +329,16 @@ private fun MeshHero(active: Boolean, peerCount: Int) {
 
 @Composable
 private fun StatusSummaryCard(active: Boolean, peerCount: Int, detail: String, signal: String) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = if (active)
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        else MaterialTheme.colorScheme.surfaceVariant)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(16.dp),
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = if (active) MeshGreen.copy(alpha = 0.10f)
+            else MaterialTheme.colorScheme.surface
+        ),
+        border = if (active) CardDefaults.outlinedCardBorder() else null
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().padding(MeshDimens.cardPaddingLarge),
             verticalAlignment = Alignment.CenterVertically) {
             // Pulsing status dot - breathes when connected
         val dotTransition = rememberInfiniteTransition(label = "dot")
@@ -369,11 +384,14 @@ private fun PeerRow(peer: PeerUiModel) {
         supportingContent = { Text(connectionLabel, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant) },
         leadingContent = {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer,
-                modifier = Modifier.size(36.dp)) {
+            Surface(
+                shape = CircleShape,
+                color = MeshGreen.copy(alpha = 0.14f),
+                modifier = Modifier.size(MeshDimens.iconContainerSmall)
+            ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Smartphone, null, Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        tint = MeshGreen)
                 }
             }
         },
