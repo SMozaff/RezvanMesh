@@ -1,0 +1,14 @@
+/home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/deps/serde-17a5adcaa257583c.d: /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/build/serde-c0ff409967aa143d/out/private.rs
+
+/home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/deps/libserde-17a5adcaa257583c.rlib: /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/build/serde-c0ff409967aa143d/out/private.rs
+
+/home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/deps/libserde-17a5adcaa257583c.rmeta: /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/build/serde-c0ff409967aa143d/out/private.rs
+
+/home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/home/all-father/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/build/serde-c0ff409967aa143d/out/private.rs:
+
+# env-dep:OUT_DIR=/home/all-father/Documents/GitHub/RezvanMesh/rust/target/debug/build/serde-c0ff409967aa143d/out
