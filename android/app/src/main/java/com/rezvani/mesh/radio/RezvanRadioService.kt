@@ -323,22 +323,33 @@ class RezvanRadioService : Service() {
         }
     }
 
-    /** Sends a receipt only after [MeshServiceConnection] reports durable inbound storage. */
+    /** Sends a receipt only after [MeshServiceConnection] reports durable inbound storage.
+     *  Retries with increasing backoff so transient radio unavailability doesn't
+     *  permanently block the sender from learning the message was received. */
     private suspend fun sendReceivedAcknowledgement(originalSender: ByteArray, messageId: ByteArray) {
         if (enginePtr == 0L || radioController == null || originalSender.size != 8 || messageId.size != 16) return
-        try {
-            val result = withContext(Dispatchers.IO) {
-                com.rezvani.mesh.MeshCore.nativeBuildMessageReceivedAck(
-                    enginePtr, originalSender, messageId, System.currentTimeMillis()
-                )
-            } ?: return
-            val dispatch = ActionDispatcher.dispatch(result, radioController!!)
-            if (dispatch !is SendResult.Queued) {
-                DiagLogger.ble("Receipt acknowledgement not locally queued: ${dispatch.failureMessage()}")
+        val maxAttempts = 3
+        repeat(maxAttempts) { attempt ->
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    com.rezvani.mesh.MeshCore.nativeBuildMessageReceivedAck(
+                        enginePtr, originalSender, messageId, System.currentTimeMillis()
+                    )
+                } ?: return
+                val dispatch = ActionDispatcher.dispatch(result, radioController!!)
+                if (dispatch is SendResult.Queued) {
+                    DiagLogger.ble("Receipt acknowledgement queued (attempt ${attempt + 1})")
+                    return
+                }
+                DiagLogger.ble("Receipt acknowledgement attempt ${attempt + 1} not queued: ${dispatch.failureMessage()}")
+            } catch (e: Exception) {
+                DiagLogger.err("SERVICE", "Receipt acknowledgement attempt ${attempt + 1} error: ${e.message}", e)
             }
-        } catch (e: Exception) {
-            DiagLogger.err("SERVICE", "Receipt acknowledgement error: ${e.message}", e)
+            if (attempt < maxAttempts - 1) {
+                delay(2000L * (attempt + 1))
+            }
         }
+        DiagLogger.ble("Receipt acknowledgement failed after $maxAttempts attempts")
     }
 
     /** Submits a signed emergency broadcast to the local mesh transport. */

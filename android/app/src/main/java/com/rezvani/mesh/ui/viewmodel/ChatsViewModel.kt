@@ -64,9 +64,10 @@ class ChatsViewModel(application: Application) : AndroidViewModel(application) {
                         lastMessageTime = lastMsg?.timestamp ?: System.currentTimeMillis(),
                         unreadCount = unread,
                         status = when (lastMsg?.status) {
-                            com.rezvani.mesh.data.entities.MessageStatus.QUEUED -> MessageStatus.SENDING
+                            com.rezvani.mesh.data.entities.MessageStatus.QUEUED,
+                            com.rezvani.mesh.data.entities.MessageStatus.LOCAL_TRANSPORT_ACCEPTED -> MessageStatus.SENDING
                             com.rezvani.mesh.data.entities.MessageStatus.FAILED -> MessageStatus.FAILED
-                            com.rezvani.mesh.data.entities.MessageStatus.DELIVERED -> MessageStatus.DELIVERED
+                            com.rezvani.mesh.data.entities.MessageStatus.REMOTE_RECEIVED -> MessageStatus.DELIVERED
                             com.rezvani.mesh.data.entities.MessageStatus.READ -> MessageStatus.READ
                             else -> MessageStatus.SENT
                         }
