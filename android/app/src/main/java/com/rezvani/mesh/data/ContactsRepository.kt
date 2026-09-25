@@ -190,7 +190,7 @@ class ContactsRepository(context: Context) {
      * that message routing would later treat as a destination.
      */
     private fun isValidNodeId(value: String): Boolean =
-        value.length == NODE_ID_HEX_LENGTH && value.all { it.isDigit() || it in "a".."f" || it in "A".."F" }
+        value.length == NODE_ID_HEX_LENGTH && value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
 
     private companion object {
         const val TAG = "ContactsRepository"
