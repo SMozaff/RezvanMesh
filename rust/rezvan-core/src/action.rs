@@ -207,16 +207,6 @@ fn write_action(buf: &mut Vec<u8>, action_type: u8, payload: &[u8]) -> bool {
     true
 }
 
-#[allow(dead_code)]
-fn write_payload(buf: &mut Vec<u8>, payload: &[u8]) -> bool {
-    if payload.len() > MAX_ACTION_PAYLOAD {
-        return false;
-    }
-    buf.extend_from_slice(&(payload.len() as u16).to_be_bytes());
-    buf.extend_from_slice(payload);
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,7 +243,7 @@ mod tests {
             let actions = vec![Action::SendBleAdvertisement { data: vec![0x5A; input] }];
             let serialized = serialize_actions(&actions);
             let declared = u16::from_be_bytes([serialized[2], serialized[3]]) as usize;
-            let expected = input.min(rezvan_common::AdvBeaconExt::SIZE);
+            let expected = rezvan_common::AdvBeaconExt::SIZE;
             assert_eq!(declared, expected, "input {input}");
             assert_eq!(serialized.len(), 1 + 1 + 2 + expected, "input {input}");
         }
