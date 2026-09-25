@@ -234,9 +234,9 @@ impl OGMPayload {
         let path_metric = u32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         let neighbor_count = data[13];
         let mut neighbors = [NeighborInfo::default(); 9];
-        for i in 0..9 {
+        for (i, neighbor) in neighbors.iter_mut().enumerate() {
             let off = 14 + i * 4;
-            neighbors[i] = NeighborInfo::deserialize(&data[off..off+4])?;
+            *neighbor = NeighborInfo::deserialize(&data[off..off+4])?;
         }
         Some(Self { timestamp, link_quality, path_metric, neighbor_count, neighbors })
     }
