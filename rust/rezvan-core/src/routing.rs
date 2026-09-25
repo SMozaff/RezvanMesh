@@ -1,9 +1,11 @@
 use rezvan_common::{AdvBeaconExt, NeighborInfo, NodeId, OGMPayload, MeshPacketHeader};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Routing Table
 // ---------------------------------------------------------------------------
+
+const MAX_TRACKED_ORIGINATORS: usize = 512;
 
 pub struct RoutingTable {
     /// Our own node id (first 8 bytes of SHA‑256(pubkey))
@@ -20,7 +22,6 @@ pub struct RoutingTable {
     /// Sized well above any real mesh (a small deployment is tens of nodes) but
     /// low enough that the worst case stays a few hundred KiB rather than
     /// growing until the process is killed.
-    const MAX_TRACKED_ORIGINATORS: usize = 512;
 
     /// Map from destination NodeId → up to 3 candidate routes
     routes: HashMap<NodeId, Vec<RouteEntry>>,
@@ -497,14 +498,14 @@ impl RoutingTable {
         // This runs on the same 30-tick cadence as the rest of `purge_stale`,
         // so an attacker gets at most a few hundred extra entries between
         // trims -- harmless, and never unbounded.
-        if self.replay_last_seen_tick.len() > Self::MAX_TRACKED_ORIGINATORS {
+        if self.replay_last_seen_tick.len() > MAX_TRACKED_ORIGINATORS {
             let mut by_recency: Vec<(NodeId, u64)> = self
                 .replay_last_seen_tick
                 .iter()
                 .map(|(node, tick)| (*node, *tick))
                 .collect();
             by_recency.sort_by_key(|(_, tick)| *tick);
-            let excess = by_recency.len() - Self::MAX_TRACKED_ORIGINATORS;
+            let excess = by_recency.len() - MAX_TRACKED_ORIGINATORS;
             for (node, _) in by_recency.into_iter().take(excess) {
                 self.replay_last_seen_tick.remove(&node);
                 self.routes.remove(&node);
