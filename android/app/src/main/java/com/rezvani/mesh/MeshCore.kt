@@ -40,6 +40,19 @@ object MeshCore {
     }
 
     @JvmStatic external fun nativeInit(seed: ByteArray, storagePath: String): Long
+    /**
+     * Encrypt and atomically persist the engine's session state (Olm account +
+     * ratchet sessions, peer key bundles, channel keys, beacon epoch key, and
+     * routing/replay history) into [storagePath].
+     *
+     * Called periodically rather than only at shutdown: Android gives no
+     * reliable "process is about to be killed" signal, so a save that only ran
+     * in onDestroy would lose everything exactly when it mattered most.
+     *
+     * @return true if the state was written, false if the engine handle is
+     *   already dead, the arguments were invalid, or the write failed.
+     */
+    @JvmStatic external fun nativeSaveState(corePtr: Long, storagePath: String, seed: ByteArray): Boolean
     @JvmStatic external fun nativeProcessIncoming(corePtr: Long, packet: ByteArray, rssi: Int, timestampUs: Long): ByteArray?
     @JvmStatic external fun nativeTick(corePtr: Long): ByteArray?
     @JvmStatic external fun nativeSendMessage(corePtr: Long, recipientId: ByteArray, plaintext: ByteArray, messageType: Int): ByteArray?

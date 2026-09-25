@@ -101,6 +101,11 @@ impl RoutingTable {
         self.current_tick = self.current_tick.wrapping_add(1);
     }
 
+    /// Read the logical clock without needing `&mut self`.
+    pub fn current_tick_value(&self) -> u64 {
+        self.current_tick
+    }
+
     /// Records that `(originator, sequence)` has been seen for relay
     /// purposes, returning `true` if it was ALREADY recorded (i.e. this is
     /// a duplicate that should be dropped rather than relayed again) or
@@ -453,6 +458,134 @@ impl RoutingTable {
         self.relayed_seen_last_tick
             .retain(|_, &mut t| now.saturating_sub(t) <= replay_max_age);
     }
+
+    // --- on-disk persistence -------------------------------------------------
+
+    /// Snapshot the routing table so a restart doesn't have to re-learn every
+    /// neighbour from scratch.
+    ///
+    /// Restarting with an empty table isn't merely a performance loss: without
+    /// the replay-sequence history, a captured old beacon/OGM from a peer that
+    /// is currently out of range becomes replayable again the moment that peer
+    /// reappears, and multi-hop sends to a still-reachable peer fail until a
+    /// fresh OGM has propagated. Persisting `last_seen_seq` alongside the routes
+    /// is therefore a security property, not just a convenience.
+    pub fn export_state(&self) -> PersistedRoutingState {
+        let mut routes: Vec<(NodeId, Vec<PersistedRouteEntry>)> = self
+            .routes
+            .iter()
+            .map(|(dest, entries)| {
+                let entries = entries
+                    .iter()
+                    .map(|e| PersistedRouteEntry {
+                        next_hop: e.next_hop,
+                        metric: e.metric,
+                        link_quality: e.link_quality,
+                        last_seen_tick: e.last_seen_tick,
+                    })
+                    .collect();
+                (*dest, entries)
+            })
+            .collect();
+        routes.sort_by_key(|(dest, _)| *dest);
+
+        let mut last_seen_seq: Vec<(NodeId, u32)> = self
+            .last_seen_seq
+            .iter()
+            .map(|(node, seq)| (*node, *seq))
+            .collect();
+        last_seen_seq.sort_by_key(|(node, _)| *node);
+
+        let mut replay_last_seen_tick: Vec<(NodeId, u64)> = self
+            .replay_last_seen_tick
+            .iter()
+            .map(|(node, tick)| (*node, *tick))
+            .collect();
+        replay_last_seen_tick.sort_by_key(|(node, _)| *node);
+
+        let mut relayed_seen: Vec<(NodeId, Vec<u32>)> = self
+            .relayed_seen
+            .iter()
+            .map(|(node, set)| {
+                let mut seqs: Vec<u32> = set.iter().copied().collect();
+                seqs.sort_unstable();
+                (*node, seqs)
+            })
+            .collect();
+        relayed_seen.sort_by_key(|(node, _)| *node);
+
+        let mut relayed_seen_last_tick: Vec<(NodeId, u64)> = self
+            .relayed_seen_last_tick
+            .iter()
+            .map(|(node, tick)| (*node, *tick))
+            .collect();
+        relayed_seen_last_tick.sort_by_key(|(node, _)| *node);
+
+        PersistedRoutingState {
+            routes,
+            last_seen_seq,
+            replay_last_seen_tick,
+            current_tick: self.current_tick,
+            relayed_seen,
+            relayed_seen_last_tick,
+        }
+    }
+
+    /// Restore a routing table from `export_state`.
+    ///
+    /// The restored `current_tick` continues from where the snapshot left off
+    /// rather than restarting at zero. That matters for `purge_stale`, which
+    /// compares `now - last_seen_tick`: resetting the clock to 0 while keeping
+    /// the saved `last_seen_tick` values would make `saturating_sub` clamp to 0
+    /// and report every saved route as freshly seen, pinning routes that are
+    /// actually long dead.
+    pub fn import_state(&mut self, state: PersistedRoutingState) {
+        self.routes = state
+            .routes
+            .into_iter()
+            .map(|(dest, entries)| {
+                let entries = entries
+                    .into_iter()
+                    .map(|e| RouteEntry {
+                        next_hop: e.next_hop,
+                        metric: e.metric,
+                        link_quality: e.link_quality,
+                        last_seen_tick: e.last_seen_tick,
+                    })
+                    .collect();
+                (dest, entries)
+            })
+            .collect();
+        self.last_seen_seq = state.last_seen_seq.into_iter().collect();
+        self.replay_last_seen_tick = state.replay_last_seen_tick.into_iter().collect();
+        self.current_tick = state.current_tick;
+        self.relayed_seen = state
+            .relayed_seen
+            .into_iter()
+            .map(|(node, seqs)| (node, seqs.into_iter().collect()))
+            .collect();
+        self.relayed_seen_last_tick = state.relayed_seen_last_tick.into_iter().collect();
+    }
+}
+
+/// Serializable form of a single `RouteEntry`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PersistedRouteEntry {
+    pub next_hop: NodeId,
+    pub metric: u32,
+    pub link_quality: u8,
+    pub last_seen_tick: u64,
+}
+
+/// Serializable form of a whole `RoutingTable`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersistedRoutingState {
+    pub routes: Vec<(NodeId, Vec<PersistedRouteEntry>)>,
+    pub last_seen_seq: Vec<(NodeId, u32)>,
+    pub replay_last_seen_tick: Vec<(NodeId, u64)>,
+    pub current_tick: u64,
+    pub relayed_seen: Vec<(NodeId, Vec<u32>)>,
+    pub relayed_seen_last_tick: Vec<(NodeId, u64)>,
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,56 @@
 
 **Date:** 2026-09-25  
 **Scope:** Full codebase — Android/Kotlin frontend, Rust core (rezvan-core, rezvan-crypto, rezvan-common), CI, docs, tests  
-**Mode:** Evidence-based, read-only audit → now in build mode for remediation
+**Status:** Audit complete. 8 of 31 findings remediated (see *Remediation Status*).
+
+---
+
+## Remediation Status
+
+Eight findings from this report have been fixed in the working tree. Everything
+below reflects the state **after** those fixes unless a row says otherwise.
+
+| ID | Status | Where | Verified by |
+|----|--------|-------|--------------|
+| **C01** | **Fixed** | `rust/rezvan-core/src/persistence.rs` (new), `session.rs`, `routing.rs`, `engine.rs`, `lib.rs`, `rezvan-crypto/src/secure_store.rs` (new), `RezvanRadioService.kt`, `MeshCore.kt` | 8 new persistence unit tests + save/load round-trip asserting the Olm identity key survives a restart |
+| **C02** | **Fixed** | `rust/rezvan-core/src/lib.rs` — engines now live in an `Arc<Mutex<MeshEngine>>` registry instead of raw `&mut` casts | 4 new concurrency tests (`registry_tests`), incl. destroy-while-in-use |
+| **C03** | **Fixed** | `RezvanRadioService.kt`, `MainActivity.kt`, `MeshServiceConnection.kt` | Manual review; the native half is covered by the C02 tests |
+| **C04** | **Fixed** | `RadioControllerImpl.kt` — `NODE_ID_OFFSET = 2` | Manual review |
+| **C05** | **Fixed** | `BlePacketSender.kt` — rewritten with explicit success/failure signalling and a bounded queue | Manual review (needs a device to exercise) |
+| **C06** | **Fixed** | `WifiPacketSender.kt`, `RadioControllerImpl.kt` | Manual review |
+| **H02** | **Fixed** | `ChannelRepository.kt`, `ChannelQrCodec.kt` | New `ChannelQrCodecTest` (9 cases) |
+| **H05** | **Fixed** | `ActionDispatcher.kt`, `RadioController.kt`, `RadioControllerImpl.kt` | New `ActionDispatcherTest` (7 cases) |
+
+**Not yet remediated:** H01, H03, H04, and all M*/L* findings. H01 (channel-key
+persistence in the Room schema) is now *substantially* addressed by C01 — the
+keys now survive a restart via the engine state file — but the metadata and the
+key are still stored in two unrelated places, which is a design wart worth
+resolving separately.
+
+### Verification performed
+
+```
+rust/  cargo test              118 passed, 0 failed  (16 common + 68 core + 34 crypto)
+rust/  cargo clippy            clean for all new/changed code
+                                  (3 pre-existing errors remain in hkdf.rs and
+                                   rezvan-common/src/lib.rs; present before these
+                                   changes and non-blocking in CI)
+       scripts/verify_interfaces.py   passed — 20 Rust / 20 Kotlin externals matched
+```
+
+### Known gaps in the verification
+
+- **The Android side was not compiled.** The Android SDK is absent and
+  `dl.google.com` is unreachable from this environment, so
+  `./gradlew :app:compileDebugKotlin` cannot resolve `com.android.application`.
+  The Kotlin changes (C03–C06, H02, H05) and the two new test files are
+  **unverified by a compiler**. Review them before merging.
+- `cargo fmt --check` still reports 138 pre-existing diffs repo-wide. The two
+  new Rust files were formatted; pre-existing files were left alone to avoid an
+  unrelated 138-hunk diff. CI treats this as non-blocking.
+- The C05/C06 transport fixes and the C01 persistence path have not been
+  exercised on a real device. `nativeSaveState`/`nativeInit`-with-restore in
+  particular need a two-session manual test.
 
 ---
 
@@ -177,11 +226,15 @@ RezvanMesh is an offline mesh messaging app with a **Kotlin/Android** frontend a
 
 This audit is complete. The findings above are evidence-backed with exact file:line references.
 
-**Ready to proceed to implementation.** The recommended execution order above respects dependencies (e.g., C02 must precede any Rust logic changes; C01 persistence design informs H01 channel key storage).
+**Already done:** C01–C06, H02, H05 (8 findings). Remaining: H01, H03, H04, and
+all M*/L* findings — see the *Remediation Priority Order* section, which is
+still accurate for what's left.
 
 ### Immediate Actions Available:
-1. **Quick Wins** (C04, C05, C06, H02, H05) — localized 1-3 line fixes
-2. **Critical Safety** (C02, C03) — Rust `Mutex` wrapper + service lifecycle fixes
-3. **Persistence Design** (C01, H01) — schema + serialization for `SessionManager` state
-
-Would you like me to start with any specific finding or phase?
+1. **Compile the Android side** — the Kotlin changes are unverified; this is the
+   highest-value next step and is blocked only on an environment with the Android SDK.
+2. **H01** — Persist channel keys in the Room schema so the key and its metadata
+   live in one place (C01 makes them durable, but they're still split across two stores).
+3. **H04** — Move the replay-state update inside the `verified` block in `routing.rs`.
+4. **H03** — Require a password on private-channel creation; add salt + Argon2id.
+5. **Quick wins** — H05 is done; M02/M03/M04 are each a few lines in the Rust core.

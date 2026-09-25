@@ -53,6 +53,15 @@ class MainActivity : ComponentActivity() {
 
     private var serviceStarted = false
 
+    /**
+     * Whether `bindService` actually succeeded for [serviceConnection].
+     *
+     * Tracked separately from [serviceStarted] because "we asked to start" and
+     * "we hold a live binding" are different facts, and only the second one
+     * licenses an `unbindService` call in onDestroy.
+     */
+    private var bindRequested = false
+
     // Live permission + radio state for the blocking UI
     private val permState = mutableStateOf(PermissionCheckResult())
 
@@ -113,6 +122,14 @@ class MainActivity : ComponentActivity() {
             MeshServiceConnection.onServiceDisconnected()
             boundService = null
             isServiceBound.value = false
+            // An unexpected disconnect means the service process died (crash,
+            // low-memory kill). The system will NOT re-deliver this callback
+            // for a service that is still alive, so treat it the same as a bind
+            // failure and allow a restart -- otherwise `serviceStarted` stays
+            // true forever and the mesh silently never comes back up.
+            serviceStarted = false
+            DiagLogger.log(this, "Radio service disconnected unexpectedly; will restart")
+            recheckAndStart()
         }
     }
 
@@ -274,6 +291,7 @@ class MainActivity : ComponentActivity() {
 
     private fun tryStartRadioService() {
         if (serviceStarted) return
+        if (isServiceBound.value) return
         val seed = try {
             IdentityBackupHelper.loadSeed(this) ?: run {
                 DiagLogger.log(this, "Service start deferred: no identity seed yet")
@@ -290,12 +308,21 @@ class MainActivity : ComponentActivity() {
         }
         serviceStarted = true
         try {
-            val intent = Intent(this, RezvanRadioService::class.java)
+            val intent = Intent(this, RezvanRadioService.class.java)
             startForegroundService(intent)
-            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            // Record that a bind was actually requested *before* calling
+            // bindService, so onDestroy can always pair an unbindService with a
+            // bindService. Android throws IllegalArgumentException if you
+            // unbind a connection that was never bound.
+            bindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+            if (!bindRequested) {
+                serviceStarted = false
+                DiagLogger.log(this, "bindService returned false")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start radio service", e)
             serviceStarted = false
+            bindRequested = false
         }
     }
 
@@ -325,6 +352,30 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try { unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
+
+        // Release the service binding. Without this the Activity's connection
+        // stays registered with the system: on a configuration change (rotation,
+        // theme/locale switch) the old Activity leaks, and because the leaked
+        // instance still holds `serviceStarted = true`, the new Activity's
+        // tryStartRadioService() returns early and the UI shows a bound service
+        // that is actually serving a dead Activity's callbacks.
+        //
+        // Guarded by `bindRequested` because Android throws
+        // IllegalArgumentException when unbinding a connection that was never
+        // bound -- which is the normal case if the service failed to start.
+        if (bindRequested) {
+            try {
+                unbindService(serviceConnection)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "unbindService failed (never bound?)", e)
+            } catch (e: Exception) {
+                Log.w(TAG, "unbindService failed", e)
+            }
+            bindRequested = false
+        }
+        boundService = null
+        isServiceBound.value = false
+        serviceStarted = false
     }
 
     companion object { private const val TAG = "MainActivity" }

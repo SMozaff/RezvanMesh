@@ -28,6 +28,7 @@ object ActionDispatcher {
             offset += payloadLen
             when (actionType) {
                 0x01 -> radio.startBleAdvertising(payload, 1000)
+                0x02 -> transportResult = dispatchSendWifiPacket(payload, radio)
                 0x03 -> transportResult = dispatchSendBlePacket(payload, radio)
                 0x04 -> {
                     if (payload.size >= 8) {
@@ -46,6 +47,35 @@ object ActionDispatcher {
             }
         }
         return transportResult
+    }
+
+    /**
+     * `payload` = [IPv4 address : 4 bytes][port : 2 bytes][packet data].
+     *
+     * Mirrors `Action::SendWifiPacket` in `rezvan-core/src/action.rs`, which
+     * is the only producer of this action type.
+     */
+    private fun dispatchSendWifiPacket(payload: ByteArray, radio: RadioController): SendResult {
+        if (payload.size < 6) {
+            DiagLogger.ble("SendWifiPacket payload too short (${payload.size} bytes), dropping")
+            return SendResult.Failed("WiFi packet missing IP/port")
+        }
+        if (payload.size == 6) {
+            DiagLogger.ble("SendWifiPacket payload has no data, dropping")
+            return SendResult.Failed("WiFi packet had no payload")
+        }
+        val ip = ((payload[0].toInt() and 0xFF) shl 24) or
+                ((payload[1].toInt() and 0xFF) shl 16) or
+                ((payload[2].toInt() and 0xFF) shl 8) or
+                (payload[3].toInt() and 0xFF)
+        val port = ((payload[4].toInt() and 0xFF) shl 8) or (payload[5].toInt() and 0xFF)
+        val data = payload.copyOfRange(6, payload.size)
+
+        return if (radio.sendWifiPacket(ip, port, data)) {
+            SendResult.Queued(peerCount = 1)
+        } else {
+            SendResult.Failed("WiFi packet was not accepted by the local transport")
+        }
     }
 
     /**

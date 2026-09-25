@@ -18,7 +18,46 @@ use rezvan_common::{
 };
 use rezvan_crypto::{CryptoProvider, IdentityKeypair};
 use vodozemac::olm::{Account, OlmMessage, Session, SessionConfig};
+use vodozemac::olm::{AccountPickle, SessionPickle};
 use vodozemac::{Curve25519PublicKey, KeyId};
+
+/// A peer's advertised keys, in a form that can be written to disk.
+///
+/// The Olm `Curve25519PublicKey`s are stored as raw 32-byte arrays rather than
+/// the vodozemac type so this stays plain serde data with no custom impls;
+/// `register_peer_keys` already takes the equivalent raw bytes off the wire,
+/// and `import_state` rebuilds the typed keys with `from_bytes`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersistedPeerKeys {
+    pub olm_identity: [u8; 32],
+    pub one_time: [u8; 32],
+    pub x25519_identity: [u8; 32],
+    pub ed25519_identity: [u8; 32],
+    pub capabilities: u32,
+}
+
+/// Everything in a `SessionManager` that must outlive the process.
+///
+/// The Olm `Account` and `Session` pickles are stored as opaque JSON strings
+/// rather than typed fields: their internal shape is vodozemac's business and
+/// carries its own versioning, so re-encoding through our own structs would
+/// couple us to a layout we don't own.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PersistedSessionState {
+    /// `Account::pickle()` serialized as JSON.
+    pub account_pickle: String,
+    /// peer NodeId -> `Session::pickle()` serialized as JSON.
+    pub session_pickles: Vec<(NodeId, String)>,
+    pub peer_keys: Vec<(NodeId, PersistedPeerKeys)>,
+    pub channel_keys: Vec<(u32, [u8; 32])>,
+    pub epoch_key: Option<[u8; 32]>,
+    pub epoch_number: u32,
+    /// Already-advertised one-time-key ids. `KeyId` is `Serialize`, so these
+    /// round-trip exactly -- and because they are intersected with the
+    /// restored account's own key set on import, ids belonging to a batch the
+    /// account no longer holds are harmlessly dropped.
+    pub otk_advertised: Vec<KeyId>,
+}
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -449,6 +488,128 @@ impl SessionManager {
 
     pub fn remove_session(&mut self, peer: &NodeId) {
         self.sessions.remove(peer);
+    }
+
+    // --- on-disk persistence -------------------------------------------------
+
+    /// Snapshot everything needed to rebuild this manager after a restart.
+    ///
+    /// Without this, every service restart minted a brand-new Olm identity
+    /// key, threw away all ratchet sessions and channel keys, and reset the
+    /// beacon epoch -- so peers had to re-exchange KeyAnnouncements before any
+    /// direct message could be decrypted again, and any message queued during
+    /// that window was undecryptable.
+    pub fn export_state(&self) -> Result<PersistedSessionState, String> {
+        let account_pickle = serde_json::to_string(&self.account.pickle())
+            .map_err(|e| format!("account pickle: {e}"))?;
+
+        let mut session_pickles = Vec::with_capacity(self.sessions.len());
+        for (peer, session) in &self.sessions {
+            let encoded = serde_json::to_string(&session.pickle())
+                .map_err(|e| format!("session pickle for {peer:?}: {e}"))?;
+            session_pickles.push((*peer, encoded));
+        }
+        // Deterministic order keeps the state file byte-stable across saves
+        // when nothing changed, which makes "did anything actually change?"
+        // cheap to answer and avoids pointless rewrites.
+        session_pickles.sort_by_key(|(peer, _)| *peer);
+
+        let mut peer_keys: Vec<(NodeId, PersistedPeerKeys)> = self
+            .peer_keys
+            .iter()
+            .map(|(peer, keys)| {
+                (
+                    *peer,
+                    PersistedPeerKeys {
+                        olm_identity: *keys.olm_identity.as_bytes(),
+                        one_time: *keys.one_time.as_bytes(),
+                        x25519_identity: keys.x25519_identity,
+                        ed25519_identity: keys.ed25519_identity,
+                        capabilities: keys.capabilities,
+                    },
+                )
+            })
+            .collect();
+        peer_keys.sort_by_key(|(peer, _)| *peer);
+
+        let mut channel_keys: Vec<(u32, [u8; 32])> = self
+            .channel_keys
+            .iter()
+            .map(|(id, key)| (*id, *key))
+            .collect();
+        channel_keys.sort_by_key(|(id, _)| *id);
+
+        // Sorted so the output is stable regardless of HashSet iteration order.
+        let mut otk_advertised: Vec<KeyId> = self.otk_advertised.iter().copied().collect();
+        otk_advertised.sort();
+
+        Ok(PersistedSessionState {
+            account_pickle,
+            session_pickles,
+            peer_keys,
+            channel_keys,
+            epoch_key: self.epoch_key,
+            epoch_number: self.epoch_number,
+            otk_advertised,
+        })
+    }
+
+    /// Rebuild a manager's state from a snapshot produced by `export_state`.
+    ///
+    /// Returns an error (leaving `self` untouched) if any pickle is malformed,
+    /// so a partially-corrupt state file is rejected as a unit rather than
+    /// restoring a half-valid ratchet -- a silently-wrong session is worse
+    /// than a clean re-handshake, because it fails as "message didn't arrive"
+    /// rather than as a diagnosable error.
+    pub fn import_state(&mut self, state: PersistedSessionState) -> Result<(), String> {
+        let account_pickle: AccountPickle = serde_json::from_str(&state.account_pickle)
+            .map_err(|e| format!("account pickle: {e}"))?;
+        let account = Account::from_pickle(account_pickle);
+
+        let mut sessions = HashMap::with_capacity(state.session_pickles.len());
+        for (peer, encoded) in &state.session_pickles {
+            let pickle: SessionPickle = serde_json::from_str(encoded)
+                .map_err(|e| format!("session pickle for {peer:?}: {e}"))?;
+            sessions.insert(*peer, Session::from_pickle(pickle));
+        }
+
+        let mut peer_keys = HashMap::with_capacity(state.peer_keys.len());
+        for (peer, keys) in &state.peer_keys {
+            peer_keys.insert(
+                *peer,
+                PeerKeys {
+                    olm_identity: Curve25519PublicKey::from_bytes(keys.olm_identity),
+                    one_time: Curve25519PublicKey::from_bytes(keys.one_time),
+                    x25519_identity: keys.x25519_identity,
+                    ed25519_identity: keys.ed25519_identity,
+                    capabilities: keys.capabilities,
+                },
+            );
+        }
+
+        let channel_keys = state.channel_keys.into_iter().collect();
+
+        // Intersect the persisted ids with the keys the *restored* account
+        // actually holds. Ids for keys the account no longer has are simply
+        // dropped -- keeping them would be harmless but meaningless, and
+        // dropping them avoids an unbounded set if a state file were carried
+        // across an account rotation.
+        let advertised: std::collections::HashSet<KeyId> = state.otk_advertised.into_iter().collect();
+        let otk_advertised = account
+            .one_time_keys()
+            .keys()
+            .filter(|id| advertised.contains(id))
+            .copied()
+            .collect();
+
+        self.account = account;
+        self.sessions = sessions;
+        self.peer_keys = peer_keys;
+        self.channel_keys = channel_keys;
+        self.epoch_key = state.epoch_key;
+        self.epoch_number = state.epoch_number;
+        self.otk_advertised = otk_advertised;
+        Ok(())
     }
 }
 

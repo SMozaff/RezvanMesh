@@ -176,11 +176,11 @@ class ChannelRepository(context: Context, passphrase: ByteArray) {
     private fun generateChannelId(name: String): Int {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(name.toByteArray())
-        // Use first 4 bytes as Int ID (positive only)
-        return ((hash[0].toInt() and 0xFF) shl 24) or
+        // Use first 4 bytes as positive Int ID (mask sign bit only on first byte)
+        return ((hash[0].toInt() and 0x7F) shl 24) or
                 ((hash[1].toInt() and 0xFF) shl 16) or
                 ((hash[2].toInt() and 0xFF) shl 8) or
-                (hash[3].toInt() and 0xFF) and 0x7FFFFFFF
+                (hash[3].toInt() and 0xFF)
     }
 
     private fun hashPassword(password: String): String {

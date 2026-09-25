@@ -33,6 +33,17 @@ class RezvanRadioService : Service() {
         const val ACTION_STOP = "com.rezvani.mesh.STOP_SERVICE"
         private const val SEED_RETRY_DELAY_MS = 500L
         private const val SEED_MAX_RETRIES = 10
+
+        /**
+         * How many 1s ticks between engine-state saves.
+         *
+         * State only changes when we send/receive something, and a save
+         * re-encrypts the whole session blob, so this trades a bounded amount
+         * of worst-case loss (messages queued in the last interval) against
+         * steady-state I/O and flash writes on a device that is battery
+         * powered and expected to run all day.
+         */
+        private const val STATE_SAVE_INTERVAL_TICKS = 30
     }
 
     private lateinit var notificationManager: NotificationManager
@@ -206,6 +217,7 @@ class RezvanRadioService : Service() {
 
     private fun startPeriodicTick() {
         tickJob = serviceScope.launch {
+            var ticksSinceSave = 0
             while (isActive && !isDestroyed.get()) {
                 delay(1000L)
                 if (enginePtr == 0L) continue
@@ -216,11 +228,45 @@ class RezvanRadioService : Service() {
                     if (result != null) {
                         radioController?.let { ActionDispatcher.dispatch(result, it) }
                     }
+
+                    // Persist session state on a slow cadence, and always
+                    // before doing anything that can end this service. Android
+                    // gives no reliable "about to be killed" signal, so a save
+                    // that only happened in onDestroy would lose everything
+                    // exactly when it mattered most.
+                    if (++ticksSinceSave >= STATE_SAVE_INTERVAL_TICKS) {
+                        ticksSinceSave = 0
+                        saveEngineState()
+                    }
                 } catch (e: Exception) {
                     DiagLogger.err("SERVICE", "Tick error: ${e.message}", e)
                 }
             }
         }
+    }
+
+    /**
+     * Writes the native engine's session state to encrypted storage.
+     *
+     * Failures are logged and swallowed: state persistence is a durability
+     * optimization, not a precondition for messaging, and a write failure must
+     * not tear down a working radio session.
+     */
+    private fun saveEngineState() {
+        val ptr = enginePtr
+        if (ptr == 0L) return
+        val seed = runCatching { IdentityBackupHelper.loadSeed(this) }.getOrNull()
+        if (seed == null) {
+            DiagLogger.err("SERVICE", "Cannot persist engine state: identity seed unavailable")
+            return
+        }
+        val ok = runCatching {
+            com.rezvani.mesh.MeshCore.nativeSaveState(ptr, filesDir.absolutePath, seed)
+        }.getOrElse { e ->
+            DiagLogger.err("SERVICE", "Engine state save failed: ${e.message}", e)
+            return
+        }
+        DiagLogger.ble("Engine state saved=$ok")
     }
 
     fun onPacketReceived(data: ByteArray, rssi: Int) {
@@ -418,19 +464,51 @@ class RezvanRadioService : Service() {
     }
 
     override fun onDestroy() {
+        // 1) Flip the destroyed flag FIRST so any coroutine that is racing to
+        //    start a native call sees it and bails out.
         isDestroyed.set(true)
+
+        // 2) Stop the periodic tick job, then cancel the whole service scope.
+        //    Both are required: cancelling the scope alone would not interrupt a
+        //    tick that is currently blocked inside a native call, and leaving
+        //    tickJob alive keeps dispatching actions against a destroyed radio.
+        tickJob?.cancel()
+        tickJob = null
+        serviceScope.cancel()
+
         runCatching { unregisterReceiver(batteryReceiver) }
         runCatching {
             getSharedPreferences("rezvan_settings", Context.MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(prefsListener)
         }
-        if (enginePtr != 0L) {
-            com.rezvani.mesh.MeshCore.nativeDestroy(enginePtr)
+
+        // Best-effort save on the way out. This is a belt-and-braces companion
+        // to the periodic save in the tick loop, not the primary mechanism: by
+        // the time onDestroy runs the tick job has already been cancelled, so
+        // this only captures state that changed since the last periodic save.
+        runCatching { saveEngineState() }
+
+        // 3) Destroy the native engine and IMMEDIATELY zero the pointer so no
+        //    late-arriving coroutine can call nativeDestroy twice or use a freed
+        //    handle. meshCorePtr is cleared first so callers bail out before the
+        //    free actually happens. Every consumer of meshCorePtr already treats
+        //    0 as "not running", so this is the correct sentinel here.
+        val ptr = enginePtr
+        enginePtr = 0L
+        if (MeshServiceConnection.meshCorePtr.value == ptr) {
+            MeshServiceConnection.meshCorePtr.value = 0L
         }
+        if (ptr != 0L) {
+            runCatching { com.rezvani.mesh.MeshCore.nativeDestroy(ptr) }
+        }
+
+        ownNodeId = null
         MeshServiceConnection.ownNodeId.value = null
-        MeshServiceConnection.meshCorePtr.value = null
         radioController?.onDestroy()
-        wakeLock?.release()
+        radioController = null
+        meshConnection = null
+        runCatching { wakeLock?.release() }
+        wakeLock = null
         DiagLogger.ble("Service destroyed")
         super.onDestroy()
     }

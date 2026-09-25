@@ -48,6 +48,7 @@ object ChannelQrCodec {
         if (parts.size != 2) return null
 
         val channelId = parts[0].toIntOrNull() ?: return null
+        if (channelId < 0) return null
         val keyHex = parts[1]
         if (keyHex.length != KEY_HEX_LEN || !keyHex.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
             return null

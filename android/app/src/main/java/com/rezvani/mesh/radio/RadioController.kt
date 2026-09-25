@@ -24,6 +24,7 @@ interface RadioController {
     fun stopWifiDirectDiscovery()
     fun connectWifiDirect(peerMacAddress: String): Boolean
     fun sendWifiPacket(peerIpAddress: String, port: Int, data: ByteArray): Boolean
+    fun sendWifiPacket(ip: Int, port: Int, data: ByteArray): Boolean
     fun disconnectWifiDirect(peerIpAddress: String)
     fun getCurrentRssi(peerMacAddress: String): Int
     fun setBleTxPower(dbm: Int)

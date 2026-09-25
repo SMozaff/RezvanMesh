@@ -781,26 +781,23 @@ class RadioControllerImpl(private val context: Context) : RadioController {
     override fun sendWifiPacket(peerIpAddress: String, port: Int, data: ByteArray): Boolean {
         return try {
             val sender = wifiSenders.getOrPut(peerIpAddress) { WifiPacketSender(peerIpAddress, port) }
-            // WifiPacketSender.send() does blocking I/O (socket connect +
-            // write) -- must not run on the calling thread if that's the
-            // main thread. Callers in this codebase (ActionDispatcher, via
-            // RezvanRadioService's serviceScope) already run on Dispatchers.IO,
-            // but sendWifiPacket itself has no coroutine context to hop into
-            // without changing this interface to suspend; run it on a plain
-            // background thread here as a safety net for any future caller
-            // that doesn't already guarantee that.
-            val result = AtomicReference<Boolean>()
-            val t = Thread {
-                result.set(sender.send(data))
-            }
-            t.isDaemon = true
-            t.start()
-            t.join(WIFI_SEND_TIMEOUT_MS)
-            result.get() ?: false
+            // Callers (ActionDispatcher via RezvanRadioService.serviceScope) already
+            // run on Dispatchers.IO, so we can call blocking I/O directly.
+            // The WifiPacketSender handles its own locking and connection management.
+            sender.send(data)
         } catch (e: Exception) {
             DiagLogger.err("WIFI", "sendWifiPacket failed to $peerIpAddress:$port: ${e.message}", e)
             false
         }
+    }
+
+    override fun sendWifiPacket(ip: Int, port: Int, data: ByteArray): Boolean {
+        // Convert int IP to dotted string for WifiPacketSender
+        val ipString = ((ip shr 24) and 0xFF).toString() + "." +
+                ((ip shr 16) and 0xFF) + "." +
+                ((ip shr 8) and 0xFF) + "." +
+                (ip and 0xFF)
+        return sendWifiPacket(ipString, port, data)
     }
 
     override fun disconnectWifiDirect(peerIpAddress: String) {
@@ -1011,10 +1008,9 @@ class RadioControllerImpl(private val context: Context) : RadioController {
     companion object {
         private const val TAG = "RadioControllerImpl"
         private const val MANUFACTURER_ID = 0xFFFF
-        private const val NODE_ID_OFFSET = 3
+        private const val NODE_ID_OFFSET = 2
         private const val NODE_ID_LEN = 8
         private val BLE_SERVICE_UUID = ParcelUuid(UUID.fromString("0000a1b2-0000-1000-8000-00805f9b34fb"))
         const val WIFI_PORT = 4237
-        private const val WIFI_SEND_TIMEOUT_MS = 5000L
     }
 }

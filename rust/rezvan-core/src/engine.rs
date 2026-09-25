@@ -871,6 +871,31 @@ impl MeshEngine {
         );
     }
 
+    // --- on-disk persistence -------------------------------------------------
+
+    /// Snapshot all state needed to resume exactly where this engine left off.
+    pub fn export_state(&self) -> Result<crate::persistence::PersistedEngineState, String> {
+        Ok(crate::persistence::PersistedEngineState {
+            session: self.sessions.export_state()?,
+            routing: self.routing.export_state(),
+            ogm_sequence: self.ogm_sequence,
+            adv_sequence: self.adv_sequence,
+        })
+    }
+
+    /// Restore state produced by `export_state`.
+    ///
+    /// The identity (and therefore NodeId) always comes from the seed passed
+    /// to `new`; only the *session* material is restored, so a state file
+    /// copied between two devices can never change who this node claims to be.
+    pub fn import_state(&mut self, state: crate::persistence::PersistedEngineState) -> Result<(), String> {
+        self.sessions.import_state(state.session)?;
+        self.routing.import_state(state.routing);
+        self.ogm_sequence = state.ogm_sequence;
+        self.adv_sequence = state.adv_sequence;
+        Ok(())
+    }
+
     pub fn key_bundle(&mut self) -> Vec<u8> {
         self.sessions.key_bundle()
     }
@@ -881,6 +906,18 @@ impl MeshEngine {
 
     pub fn create_channel_key(&mut self, channel_id: u32) -> [u8; 32] {
         self.sessions.create_channel_key(channel_id)
+    }
+
+    /// The shared key for `channel_id`, if we hold one. `None` after a restart
+    /// that failed to restore state, or for a channel we never created/joined.
+    pub fn channel_key(&self, channel_id: u32) -> Option<[u8; 32]> {
+        self.sessions.channel_key(channel_id)
+    }
+
+    /// Current routing logical clock. Exposed for persistence tests and
+    /// diagnostics; production code reaches this through `routing_snapshot`.
+    pub fn snapshot_tick(&self) -> u64 {
+        self.routing.current_tick_value()
     }
 
     pub fn set_channel_key(&mut self, channel_id: u32, key: [u8; 32]) {

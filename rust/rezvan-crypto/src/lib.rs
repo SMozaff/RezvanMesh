@@ -4,6 +4,7 @@ pub mod sender_key;
 pub mod hkdf;
 pub mod beacon_mac;
 pub mod epoch_key;
+pub mod secure_store;
 
 pub use identity::IdentityKeypair;
 

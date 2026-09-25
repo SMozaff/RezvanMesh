@@ -63,6 +63,14 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
             // Keep the UI bridge for automatic service reconnects.
             ownNodeId.value = null
             isServiceConnected.value = false
+            // The engine lives in the service process, so an unexpected
+            // disconnect invalidates the handle outright. Leaving a stale
+            // non-null pointer here means every ViewModel that checks
+            // `meshCorePtr` sees a "live" engine and calls into a process that
+            // no longer exists. The service clears this itself on a clean
+            // onDestroy; doing it here as well covers the crash/kill case,
+            // where onDestroy never runs.
+            meshCorePtr.value = 0L
         }
     }
 
@@ -146,6 +154,10 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
         activeService = null
         activeServiceFlow.value = null
         isServiceConnected.value = false
+        ownNodeId.value = null
+        // See the companion overload for why the engine handle must be dropped
+        // here too: a process death never runs RezvanRadioService.onDestroy.
+        meshCorePtr.value = 0L
     }
 }
 
