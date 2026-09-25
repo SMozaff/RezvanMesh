@@ -26,7 +26,7 @@
   reviewable.
 
   If backup is ever genuinely wanted, the right shape is a targeted allowlist
-  for user-visible data only -- never `sharedpref` (identity seed and DB
+  for user-visible data only — never `sharedpref` (identity seed and DB
   passphrase) and never `database`.
 -->
 <data-extraction-rules>
