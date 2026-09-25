@@ -46,7 +46,7 @@ class JoinThrottleTest {
             assertTrue(t.tryAttempt(1))
             t.recordFailure(1)
         }
-        assertTrue(t.tryAttempt(1), "two failures must not lock the user out")
+        assertTrue("two failures must not lock the user out", t.tryAttempt(1))
     }
 
     @Test
@@ -56,7 +56,7 @@ class JoinThrottleTest {
             assertTrue(t.tryAttempt(1))
             t.recordFailure(1)
         }
-        assertFalse(t.tryAttempt(1), "the third failure must trip the lockout")
+        assertFalse("the third failure must trip the lockout", t.tryAttempt(1))
     }
 
     @Test
@@ -65,9 +65,9 @@ class JoinThrottleTest {
         repeat(3) { t.recordFailure(1) }
         assertFalse(t.tryAttempt(1))
         now += 4_999L
-        assertFalse(t.tryAttempt(1), "still inside the cooldown window")
+        assertFalse("still inside the cooldown window", t.tryAttempt(1))
         now += 2L
-        assertTrue(t.tryAttempt(1), "must be allowed once the cooldown elapses")
+        assertTrue("must be allowed once the cooldown elapses", t.tryAttempt(1))
     }
 
     /**
@@ -123,8 +123,8 @@ class JoinThrottleTest {
     fun `throttling is per channel`() {
         val t = throttle(maxAttempts = 2)
         repeat(2) { t.recordFailure(1) }
-        assertFalse(t.tryAttempt(1), "channel 1 is locked")
-        assertTrue(t.tryAttempt(2), "an unrelated channel must be unaffected")
+        assertFalse("channel 1 is locked", t.tryAttempt(1))
+        assertTrue("an unrelated channel must be unaffected", t.tryAttempt(2))
     }
 
     @Test
@@ -133,7 +133,7 @@ class JoinThrottleTest {
         repeat(3) { t.recordFailure(1) }
         assertFalse(t.tryAttempt(1))
         t.recordSuccess(1)
-        assertTrue(t.tryAttempt(1), "a successful join must forgive earlier typos")
+        assertTrue("a successful join must forgive earlier typos", t.tryAttempt(1))
     }
 
     @Test
@@ -152,6 +152,6 @@ class JoinThrottleTest {
     fun `tryAttempt does not itself count as a failure`() {
         val t = throttle(maxAttempts = 2)
         repeat(50) { assertTrue(t.tryAttempt(1)) }
-        assertTrue(t.tryAttempt(1), "polling must not trip the lockout")
+        assertTrue("polling must not trip the lockout", t.tryAttempt(1))
     }
 }
