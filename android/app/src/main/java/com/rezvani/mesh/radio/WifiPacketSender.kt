@@ -43,7 +43,7 @@ class WifiPacketSender(private val ip: String, private val port: Int) {
         } catch (e: IOException) {
             Log.e(TAG, "Failed to send WiFi packet to $ip:$port", e)
             closeSocketLocked()
-            false
+            return false
         } finally {
             lock.unlock()
         }
