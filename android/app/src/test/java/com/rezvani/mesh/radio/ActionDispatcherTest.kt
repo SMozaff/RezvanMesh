@@ -87,7 +87,7 @@ class ActionDispatcherTest {
     fun `wifi action is dispatched with the parsed ip port and payload`() {
         val radio = FakeRadioController()
         val data = byteArrayOf(9, 8, 7)
-        val frame = actionFrame(0x02, wifiPayload(byteArrayOf(192.toByte(), 168, 0, 1), 4237, data))
+        val frame = actionFrame(0x02, wifiPayload(byteArrayOf(192.toByte(), 168.toByte(), 0, 1), 4237, data))
 
         val result = ActionDispatcher.dispatch(frame, radio)
 
@@ -126,7 +126,7 @@ class ActionDispatcherTest {
     @Test
     fun `ble advertisement action is still dispatched`() {
         val radio = FakeRadioController()
-        val adv = ByteArray(24) { 0x5A }
+        val adv = ByteArray(24) { 0x5A.toByte() }
         ActionDispatcher.dispatch(actionFrame(0x01, adv), radio)
         assertArrayEquals(adv, radio.advertised)
     }
@@ -153,7 +153,7 @@ class ActionDispatcherTest {
     @Test
     fun `ble packet action is still dispatched`() {
         val radio = FakeRadioController()
-        val target = ByteArray(8) { 0x11 }
+        val target = ByteArray(8) { 0x11.toByte() }
         val data = byteArrayOf(1, 2, 3, 4)
         val frame = actionFrame(0x03, target + data)
         // No MAC is registered for this NodeId, so the fake reports no reachable
