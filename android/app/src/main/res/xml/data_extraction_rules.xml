@@ -14,7 +14,7 @@
 
   What would have been transferred: the SQLCipher-encrypted message/channel
   database (unreadable elsewhere, since its passphrase is Keystore-wrapped and
-  non-exportable -- so this is a disclosure of ciphertext, not plaintext), the
+  non-exportable, so this is a disclosure of ciphertext, not plaintext), the
   `contacts.txt` list (which *is* plaintext), and the rolling diagnostic logs
   under `getExternalFilesDir`, which contain peer NodeIds and truncated MAC
   addresses.
