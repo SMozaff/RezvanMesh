@@ -206,7 +206,7 @@ mod tests {
         let b = hkdf_sha256(b"ikm", b"salt", b"info", 33);
         assert_eq!(a.len(), 32);
         assert_eq!(b.len(), 33);
-        assert_ne!(&a[..], &b[..32], "block 2 must differ from block 1");
+        assert_eq!(&a[..], &b[..32], "HKDF output for 33 bytes must preserve the first 32 bytes");
     }
 
 }
