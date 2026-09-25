@@ -1,5 +1,5 @@
 use rezvan_common::{AdvBeaconExt, NeighborInfo, NodeId, OGMPayload, MeshPacketHeader};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
 // Routing Table
