@@ -97,7 +97,7 @@ class JoinThrottleTest {
         // Trip the first lockout (2 failures) and measure it.
         repeat(2) { t.recordFailure(1) }
         val first = waitNeeded(t, 1)
-        assertEquals("first lockout should be one base cooldown", 1_000L, first)
+        assertEquals(1_000L, first)
 
         // Now fail past the threshold twice more; the wait must grow.
         repeat(2) { t.recordFailure(1) }
@@ -110,7 +110,7 @@ class JoinThrottleTest {
         // Keep failing. The wait must saturate at the cap, never exceed it.
         repeat(40) { t.recordFailure(1) }
         val capped = waitNeeded(t, 1, limitMs = maxCooldown * 4)
-        assertEquals("backoff must saturate at maxCooldownMs", maxCooldown, capped)
+        assertEquals(maxCooldown, capped)
 
         // And a very large failure count must not wrap the shift to a
         // zero-length cooldown.
