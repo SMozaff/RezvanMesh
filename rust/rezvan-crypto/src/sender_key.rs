@@ -17,11 +17,23 @@
 //! `[u8; 32]` key still provides confidentiality/tamper-detection against
 //! outsiders exactly as before; this only adds the missing per-sender layer.
 //!
-//! Nothing calls this module in production yet (channels have no send/receive
-//! wiring at all as of this fix -- see ChannelRepository, which is pure local
-//! metadata). This is intentionally fixed now, before any transport code is
-//! built on top of it, rather than shipping the unauthenticated primitive and
-//! retrofitting later.
+//! Wireing (correct as of this writing):
+//!
+//! * `rezvan_core::engine::send_channel_message` encrypts and signs, and
+//!   `process_incoming`'s `0x06` arm decrypts and verifies, using
+//!   `SessionManager::channel_key`.
+//! * `SessionManager::create_channel_key` / `set_channel_key` hold the shared
+//!   key per channel.
+//! * The Android side calls through `MeshCore.nativeSendChannelMessage`,
+//!   `nativeCreateChannelKey`, and `nativeSetChannelKey`, surfaced as
+//!   `RezvanRadioService.sendChannelMessage` and the channel view models.
+//!
+//! An earlier version of this comment stated that "nothing calls this module in
+//! production yet (channels have no send/receive wiring at all)". That was true
+//! when the per-sender signature was added and became false once the channel
+//! transport was wired up -- it is called out here because a comment that
+//! actively tells a reader "this is unreachable" is worse than no comment when
+//! it is wrong, since it invites someone to "clean up" the live path.
 
 use sodiumoxide::crypto::aead::xchacha20poly1305_ietf;
 use crate::identity::IdentityKeypair;

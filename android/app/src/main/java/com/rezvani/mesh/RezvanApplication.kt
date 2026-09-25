@@ -1,11 +1,10 @@
 package com.rezvani.mesh
 
 import android.app.Application
-import android.content.ContentValues
 import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import com.rezvani.mesh.utils.DiagLogger
+import java.io.File
+import java.io.FileOutputStream
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -42,22 +41,35 @@ class RezvanApplication : Application() {
             sb.appendLine(sw.toString())
             sb.appendLine()
             sb.appendLine("=== LAST 200 DIAG ENTRIES ===")
+            sb.appendLine("(these contain peer NodeIds and truncated MAC addresses -- share with care)")
             DiagLogger.entries.value.takeLast(200).forEach { sb.appendLine(it.formatted()) }
 
             val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
             val filename = "rezvan-crash-$ts-${BuildConfig.GIT_SHA}.txt"
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
-                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+
+            // Written to app-scoped external storage rather than
+            // `Environment.DIRECTORY_DOWNLOADS`.
+            //
+            // Downloads is user-visible, indexed by the media scanner, and on
+            // older releases world-readable -- so an unattended crash was
+            // silently depositing a device fingerprint, the git SHA, a stack
+            // trace, and 200 lines of diagnostics containing peer NodeIds and
+            // truncated MAC addresses into a shareable location, with no
+            // indication to the user that it had happened. For a
+            // privacy-oriented offline mesh app that is a disclosure bug, not
+            // just untidiness.
+            //
+            // `getExternalFilesDir` is app-scoped: removed on uninstall, not
+            // scanned into the media store, and still reachable over adb (or a
+            // file manager) when someone actually wants to file a bug report.
+            // `DiagLogger` already writes its rolling log to the same area.
+            val dir = File(getExternalFilesDir(null), "crash").apply { mkdirs() }
+            val file = File(dir, filename)
+            FileOutputStream(file).use { os ->
+                os.write(sb.toString().toByteArray())
+                os.flush()
             }
-            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            uri?.let {
-                contentResolver.openOutputStream(it)?.use { os ->
-                    os.write(sb.toString().toByteArray())
-                    os.flush()
-                }
-            }
+            DiagLogger.err("APP", "Crash dossier written to ${file.absolutePath}")
         } catch (_: Throwable) { }
     }
 }

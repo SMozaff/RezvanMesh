@@ -33,6 +33,60 @@ class FileStorageManager(private val context: Context) {
         private const val GCM_NONCE_LENGTH = 12
         private const val GCM_TAG_LENGTH = 128
         private const val AES_KEY_SIZE = 32 // 256 bits
+
+        /**
+         * Characters allowed in a stored file's name.
+         *
+         * Anything else -- separators, `..`, NUL, path separators -- is
+         * replaced rather than rejected, so a message id that happens to contain
+         * a slash cannot escape the attachments directory or, worse, name a
+         * file outside it.
+         */
+        private val SAFE_NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".toSet()
+
+        /** Cap on the generated file name, well under any filesystem limit. */
+        private const val MAX_FILE_NAME_LENGTH = 128
+    }
+
+    /**
+     * Reduce an arbitrary identifier to a safe single path component.
+     *
+     * The result can never contain `/`, `\`, or a `.` at the start of a
+     * component, so it cannot traverse out of [attachmentsDir] and cannot be
+     * mistaken for `.` or `..`.
+     */
+    private fun safeFileName(raw: String): String {
+        val cleaned = buildString(raw.length) {
+            for (c in raw) append(if (c in SAFE_NAME_CHARS) c else '_')
+        }
+        // A blank or all-underscore result would still collide across
+        // identifiers, so fold the original into a short hash for uniqueness.
+        if (cleaned.isEmpty() || cleaned.all { it == '_' }) {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray())
+            return digest.joinToString("") { "%02x".format(it) }
+        }
+        return cleaned.take(MAX_FILE_NAME_LENGTH)
+    }
+
+    /**
+     * Resolve [filePath] and confirm it lives inside [attachmentsDir].
+     *
+     * `readFile` and `deleteFile` take a path as their argument. Without this
+     * check they are a general-purpose "read any file the app can read" and
+     * "delete any file the app can delete" primitive, reachable by anything that
+     * can influence a stored path.
+     */
+    private fun resolveInsideAttachments(filePath: String): File? {
+        val root = attachmentsDir.canonicalFile
+        val candidate = File(filePath).canonicalFile
+        // `startsWith` on canonical paths is safe against `../` escapes because
+        // both sides are canonical absolute paths with no unresolved segments.
+        if (candidate != root && !candidate.path.startsWith(root.path + File.separator)) {
+            Log.w(TAG, "Refusing path outside the attachments directory: $filePath")
+            return null
+        }
+        return candidate
     }
 
     /**
@@ -59,7 +113,10 @@ class FileStorageManager(private val context: Context) {
         val encrypted = cipher.doFinal(data)
 
         // Write to file: [nonce][ciphertext]
-        val file = File(attachmentsDir, "$messageId.enc")
+        // The name is sanitised: `messageId` is interpolated into a path, and
+        // an id containing `../` or a separator would otherwise place the file
+        // anywhere the process can write.
+        val file = File(attachmentsDir, safeFileName(messageId) + ".enc")
         FileOutputStream(file).use { fos ->
             fos.write(nonce)
             fos.write(encrypted)
@@ -77,17 +134,24 @@ class FileStorageManager(private val context: Context) {
      * @return Decrypted file data, or null if decryption fails.
      */
     suspend fun readFile(filePath: String, fileKey: ByteArray): ByteArray? = withContext(Dispatchers.IO) {
-        val file = File(filePath)
-        if (!file.exists()) {
+        val file = resolveInsideAttachments(filePath)
+        if (file == null || !file.exists()) {
             Log.w(TAG, "File not found: $filePath")
             return@withContext null
         }
 
         return@withContext try {
             FileInputStream(file).use { fis ->
-                // Read nonce
+                // Read nonce. `read` can return short and a truncated file
+                // would leave part of the nonce as zeros, producing a
+                // confusing "bad tag" failure instead of "file is corrupt".
                 val nonce = ByteArray(GCM_NONCE_LENGTH)
-                fis.read(nonce)
+                var read = 0
+                while (read < GCM_NONCE_LENGTH) {
+                    val n = fis.read(nonce, read, GCM_NONCE_LENGTH - read)
+                    if (n < 0) throw java.io.EOFException("Attachment truncated before the nonce was read")
+                    read += n
+                }
 
                 // Read ciphertext
                 val encrypted = fis.readBytes()
@@ -110,7 +174,7 @@ class FileStorageManager(private val context: Context) {
      * Deletes a file from disk.
      */
     suspend fun deleteFile(filePath: String): Boolean = withContext(Dispatchers.IO) {
-        val file = File(filePath)
+        val file = resolveInsideAttachments(filePath) ?: return@withContext false
         if (file.exists()) {
             file.delete()
         } else {

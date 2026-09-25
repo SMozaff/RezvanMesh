@@ -26,6 +26,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -67,7 +68,8 @@ class RadioControllerImpl(private val context: Context) : RadioController {
      * empty, so any message sent during the connect window was silently
      * dropped. This is the real, write-and-read version.
      */
-    private val pendingPacketsByMac = ConcurrentHashMap<String, MutableList<ByteArray>>()
+    private val pendingPacketsByMac =
+        ConcurrentHashMap<String, ConcurrentLinkedQueue<ByteArray>>()
 
     private val isScanning = AtomicBoolean(false)
     private val scanHandler = Handler(Looper.getMainLooper())
@@ -616,12 +618,40 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         // A discovered peer can be queued while its GATT connection is being
         // established. This is a local queue acknowledgement, not delivery.
         DiagLogger.ble("sendToNodeId: queuing for $nodeIdHex (${mac.takeLast(5)}), no sender yet")
-        pendingPacketsByMac.getOrPut(mac) { mutableListOf() }.add(data)
+        enqueuePending(mac, data)
         return if (connectToPeer(mac)) SendResult.Queued(peerCount = 1)
         else {
             pendingPacketsByMac[mac]?.remove(data)
             SendResult.Failed("Could not open a radio connection to the peer")
         }
+    }
+
+    /**
+     * Queue a packet for a peer whose GATT link is still being negotiated.
+     *
+     * Bounded, and drops the *oldest* packet on overflow.
+     *
+     * The previous version used an unbounded `MutableList` reached through
+     * `getOrPut`, which had two problems beyond the missing bound:
+     * `getOrPut` is not atomic on a `ConcurrentHashMap`, and `MutableList` is
+     * not thread-safe, so two concurrent sends to the same peer could each
+     * create a list (silently discarding one peer's packets) or interleave
+     * appends. A `ConcurrentLinkedQueue` plus `computeIfAbsent` fixes the race.
+     *
+     * The bound fixes memory exhaustion: a peer that is scanned but never
+     * completes service discovery leaves this entry growing indefinitely, and
+     * at up to 64 KiB per mesh packet that is a straightforward OOM on a device
+     * also holding a routing table, an Olm session store, and a decrypted
+     * database. Dropping the oldest is deliberate -- on a mesh the newest
+     * message is the one the user is waiting on, and a backlog of stale
+     * packets delivered in order is worth less than the current one.
+     */
+    private fun enqueuePending(mac: String, data: ByteArray) {
+        val queue = pendingPacketsByMac.computeIfAbsent(mac) { ConcurrentLinkedQueue<ByteArray>() }
+        while (queue.size >= MAX_PENDING_PACKETS_PER_PEER) {
+            if (queue.poll() == null) break
+        }
+        queue.add(data)
     }
 
     override fun disconnectPeer(peerMacAddress: String) {
@@ -870,11 +900,20 @@ class RadioControllerImpl(private val context: Context) : RadioController {
     }
 
     private fun hasWifiDirectPermission(): Boolean {
-        // WifiP2pManager peer/connection APIs require ACCESS_FINE_LOCATION
-        // pre-API33, and NEARBY_WIFI_DEVICES from API33+ (already declared in
-        // the manifest). Reuse the same location-permission check already
-        // used for BLE scanning, since the underlying requirement is the same.
-        return hasLocationPermission()
+        // WifiP2pManager's peer/connection APIs are gated on
+        // ACCESS_FINE_LOCATION below API 33, and on the dedicated
+        // NEARBY_WIFI_DEVICES runtime permission from API 33 onward. Checking
+        // only location meant that on Android 13+ a device with location granted
+        // but NEARBY_WIFI_DEVICES denied (or simply never requested) passed this
+        // gate and then had every discoverPeers/requestPeers call throw
+        // SecurityException.
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.NEARBY_WIFI_DEVICES
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            hasLocationPermission()
+        }
     }
 
     /**
@@ -1012,5 +1051,15 @@ class RadioControllerImpl(private val context: Context) : RadioController {
         private const val NODE_ID_LEN = 8
         private val BLE_SERVICE_UUID = ParcelUuid(UUID.fromString("0000a1b2-0000-1000-8000-00805f9b34fb"))
         const val WIFI_PORT = 4237
+
+        /**
+         * Per-peer cap on packets queued while a GATT link is being negotiated.
+         *
+         * Sized for a burst, not a backlog: a few dozen mesh packets is far
+         * more than a working send path accumulates during a connect, and
+         * beyond that the link is not coming up and holding more only risks
+         * memory.
+         */
+        private const val MAX_PENDING_PACKETS_PER_PEER = 64
     }
 }

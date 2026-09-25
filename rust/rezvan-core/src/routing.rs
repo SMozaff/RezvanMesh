@@ -10,8 +10,9 @@ pub struct RoutingTable {
     pub node_id: NodeId,
     /// Map from destination NodeId → up to 3 candidate routes
     routes: HashMap<NodeId, Vec<RouteEntry>>,
-    /// Highest sequence number seen from each originator, for replay
-    /// rejection. Populated by `process_beacon`.
+    /// Highest **beacon** sequence seen from each originator, for replay
+    /// rejection. Populated by `process_beacon` only, and only for beacons
+    /// that passed MAC verification.
     ///
     /// Remediation #2 (see REMEDIATION_PROPOSAL.md): this used to be pruned
     /// in lockstep with route eviction in `purge_stale`, which reset replay
@@ -22,10 +23,24 @@ pub struct RoutingTable {
     /// (`replay_last_seen_tick`, evicted only by `max_age_ticks *
     /// REPLAY_RETENTION_MULTIPLIER`), so it deliberately outlives the
     /// routing entry itself.
-    last_seen_seq: HashMap<NodeId, u32>,
-    /// Tick at which we last updated `last_seen_seq` for a given originator.
-    /// Used only to eventually bound `last_seen_seq`'s memory growth; NOT
-    /// used to gate replay rejection itself.
+    last_beacon_seq: HashMap<NodeId, u32>,
+    /// Highest **signed-packet** sequence seen from each originator.
+    /// Populated by `process_ogm`.
+    ///
+    /// This is deliberately a *separate* map from `last_beacon_seq`, not a
+    /// shared high-water mark. Beacons carry `MeshEngine::adv_sequence` and
+    /// signed packets (OGM, KeyAnnouncement, broadcast, channel, ACK) carry
+    /// `MeshEngine::ogm_sequence` -- two independent counters that advance at
+    /// very different rates (the beacon counter ticks every cycle; the packet
+    /// counter only advances when a packet is actually built). Collapsing them
+    /// into one map means whichever counter runs ahead silently starves the
+    /// other: in practice a peer's OGM (sequence ~5) is rejected as "stale"
+    /// moments after its beacon (sequence ~50) is accepted, which breaks
+    /// multi-hop route propagation almost immediately after startup.
+    last_packet_seq: HashMap<NodeId, u32>,
+    /// Tick at which we last updated `last_beacon_seq` or `last_packet_seq`
+    /// for a given originator. Used only to eventually bound those maps'
+    /// memory growth; NOT used to gate replay rejection itself.
     replay_last_seen_tick: HashMap<NodeId, u64>,
     /// Logical clock (advanced by the engine once per `tick()`, i.e. once
     /// per BLE-advertisement cycle). There is no wall-clock time available
@@ -39,10 +54,10 @@ pub struct RoutingTable {
     /// Set of (originator, sequence) pairs this node has already relayed or
     /// re-flooded, used by `seen_and_record` to prevent relay loops for
     /// 0x02/0x03/0x06 packets (see `MeshEngine::process_incoming`'s relay
-    /// section). Deliberately separate from `last_seen_seq`: that field
-    /// gates REPLAY (a sequence must be strictly greater than the last one
-    /// seen from that originator, for beacons/OGMs which are periodic and
-    /// monotonically increasing), whereas relay dedup needs to catch an
+    /// section). Deliberately separate from `last_beacon_seq`/`last_packet_seq`:
+    /// those fields gate REPLAY (a sequence must be strictly greater than the
+    /// last one seen from that originator, for beacons/OGMs which are periodic
+    /// and monotonically increasing), whereas relay dedup needs to catch an
     /// EXACT (originator, sequence) pair seen before regardless of
     /// ordering -- a flooded broadcast can legitimately arrive out of order
     /// from multiple neighbours, and rejecting anything "not strictly
@@ -50,7 +65,7 @@ pub struct RoutingTable {
     /// broadcast arriving via a different, slower path before drop-worthy
     /// duplication has even been established.
     ///
-    /// Bounded the same way as `last_seen_seq`/`replay_last_seen_tick`: per
+    /// Bounded the same way as `last_beacon_seq`/`replay_last_seen_tick`: per
     /// originator, evicted via `relayed_seen_last_tick` after
     /// `REPLAY_RETENTION_MULTIPLIER * max_age_ticks` of silence from that
     /// originator, so this doesn't grow unboundedly over a long session.
@@ -79,7 +94,8 @@ impl RoutingTable {
         Self {
             node_id,
             routes: HashMap::new(),
-            last_seen_seq: HashMap::new(),
+            last_beacon_seq: HashMap::new(),
+            last_packet_seq: HashMap::new(),
             replay_last_seen_tick: HashMap::new(),
             current_tick: 0,
             relayed_seen: HashMap::new(),
@@ -129,16 +145,35 @@ impl RoutingTable {
     /// beacon's MAC itself -- that requires the sender's X25519 identity key
     /// from `SessionManager`, which `RoutingTable` deliberately has no
     /// access to (keeping crypto verification and routing-table bookkeeping
-    /// separate). The caller (`MeshEngine::process_incoming`) MUST verify
-    /// the beacon via `rezvan_crypto::epoch_key::verify_tag` -- or confirm
-    /// the sender is not yet known and treat this as discovery-only -- before
-    /// calling this function with `verified = true`.
+    /// separate). The caller (`MeshEngine::process_beacon`) verifies the beacon
+    /// via `rezvan_crypto::epoch_key::verify_tag` and passes the outcome as
+    /// `verified`.
     ///
-    /// Independent of authentication, this always enforces replay/reordering
-    /// protection: a beacon whose sequence number is not strictly greater
-    /// than the last one seen from this originator is rejected outright,
-    /// authenticated or not (a replayed OLD beacon is never useful even if
-    /// its MAC is valid).
+    /// # Unverified beacons must not advance the replay high-water mark
+    ///
+    /// This is the whole reason `verified` gates *every* state write below, not
+    /// just the routing-table update. An earlier version recorded the sequence
+    /// for unverified beacons too (to avoid re-processing the same one twice),
+    /// which handed any unauthenticated attacker a trivial suppression attack:
+    /// broadcast beacons claiming a victim's NodeId with a very high sequence
+    /// number, and every *legitimate* beacon from that victim afterwards is
+    /// rejected as "stale or replayed". The victim becomes permanently
+    /// unroutable and invisible, with no ability to recover except by waiting
+    /// out the replay-retention window.
+    ///
+    /// The original motivation for tracking unverified beacons -- "don't
+    /// process the exact same one twice" -- does not actually require it:
+    /// processing an unverified beacon is a pure no-op that returns `false`
+    /// without touching any state, so re-processing is free. Note this does
+    /// not fully close beacon spoofing by a *mesh member*, since the
+    /// network-wide epoch key means any member can forge any sender's beacon
+    /// (a deliberate, documented tradeoff -- see `rezvan_crypto::epoch_key`);
+    /// it closes spoofing by a non-member, which is the unauthenticated
+    /// attacker.
+    ///
+    /// Once `verified`, replay/reordering protection is enforced: a beacon
+    /// whose sequence is not strictly greater than the last verified one from
+    /// that originator is rejected as replayed.
     ///
     /// Returns `true` if the routing table changed such that this beacon's
     /// information is now worth reflecting in our own next OGM.
@@ -147,23 +182,21 @@ impl RoutingTable {
             return false;
         }
 
-        let last_seq = self.last_seen_seq.get(&beacon.originator).copied();
+        // Discovery-only beacon: we have no epoch key yet, or the tag did not
+        // verify. Touch nothing -- in particular, do NOT record the sequence.
+        // See the doc comment above for why recording it here is a vulnerability.
+        if !verified {
+            return false;
+        }
+
+        let last_seq = self.last_beacon_seq.get(&beacon.originator).copied();
         if let Some(last) = last_seq {
             if beacon.sequence <= last {
                 return false; // stale or replayed
             }
         }
-        self.last_seen_seq.insert(beacon.originator, beacon.sequence);
+        self.last_beacon_seq.insert(beacon.originator, beacon.sequence);
         self.replay_last_seen_tick.insert(beacon.originator, self.current_tick);
-
-        // Unverified beacons (sender's key not yet known -- first contact)
-        // update replay tracking above so we don't process the exact same
-        // unverified beacon twice, but must NOT be allowed to influence
-        // routing decisions. Once the sender's KeyAnnouncement arrives and
-        // later beacons verify, routing starts reflecting them normally.
-        if !verified {
-            return false;
-        }
 
         let lq = rssi_to_lq(rssi);
         if lq == 0 {
@@ -328,7 +361,13 @@ impl RoutingTable {
     /// beacon format -- see module note above). Caller must have already
     /// verified the trailing Ed25519 signature before calling this; this
     /// function only handles routing-table bookkeeping and enforces the same
-    /// replay check as `process_beacon`.
+    /// replay check as `process_beacon`, against the *signed-packet* sequence
+    /// space (`last_packet_seq`) rather than the beacon one.
+    ///
+    /// Because the caller has verified the signature, an OGM is always
+    /// authenticated before we get here -- so unlike `process_beacon` there is
+    /// no `verified` flag, and the sequence can safely advance the high-water
+    /// mark.
     pub fn process_ogm(&mut self, packet: &[u8], rssi: i32) -> bool {
         let header = match MeshPacketHeader::deserialize(packet) {
             Some(h) => h,
@@ -339,7 +378,7 @@ impl RoutingTable {
             return false;
         }
 
-        let last_seq = self.last_seen_seq.get(&header.originator).copied();
+        let last_seq = self.last_packet_seq.get(&header.originator).copied();
         if let Some(last) = last_seq {
             if header.sequence <= last {
                 return false;
@@ -361,7 +400,8 @@ impl RoutingTable {
             return false;
         }
 
-        self.last_seen_seq.insert(header.originator, header.sequence);
+        self.last_packet_seq.insert(header.originator, header.sequence);
+        self.replay_last_seen_tick.insert(header.originator, self.current_tick);
 
         let battery_weight = 1.0;
         let hop_penalty = compute_hop_penalty(lq, battery_weight);
@@ -399,12 +439,12 @@ impl RoutingTable {
     /// wall-clock time at this layer, so "ticks" stands in for elapsed time;
     /// at the default beacon cadence this is roughly `max_age_ticks` seconds,
     /// but the exact mapping depends on the current power state's OGM
-    /// interval). Also drops `last_seen_seq` entries for any originator with
-    /// no remaining routes, so memory doesn't grow unboundedly over a long
+    /// interval). Also drops replay high-water-mark entries for any originator
+    /// with no remaining routes, so memory doesn't grow unboundedly over a long
     /// mesh session as peers come and go (security audit finding #9: this
     /// function previously did nothing and was never called).
     ///
-    /// Tradeoff: forgetting `last_seen_seq` for a purged (long-silent) peer
+    /// Tradeoff: forgetting `last_beacon_seq` for a purged (long-silent) peer
     /// means that if that peer reappears, its next beacon is accepted even
     /// if its sequence number happens to be lower than one we saw a long
     /// time ago -- an attacker who captured that peer's old beacon could
@@ -423,7 +463,7 @@ impl RoutingTable {
         });
 
         // Replay-sequence tracking is intentionally NOT tied to route
-        // liveness (see field docs on `last_seen_seq` / remediation #2). A
+        // liveness (see field docs on `last_beacon_seq` / remediation #2). A
         // peer that goes out of range and reconnects within
         // REPLAY_RETENTION_MULTIPLIER * max_age_ticks must not have its
         // sequence counter reset, or a captured old beacon becomes replayable
@@ -432,7 +472,17 @@ impl RoutingTable {
         // to gate security.
         let replay_max_age = max_age_ticks.saturating_mul(Self::REPLAY_RETENTION_MULTIPLIER);
         let replay_last_seen_tick = &self.replay_last_seen_tick;
-        self.last_seen_seq.retain(|node, _| {
+        // Both sequence spaces share one tick map, so "silent" means silent in
+        // either space. An originator with an entry in only one of the two
+        // maps is still correctly bounded: its eviction follows the same
+        // window.
+        self.last_beacon_seq.retain(|node, _| {
+            replay_last_seen_tick
+                .get(node)
+                .map(|&t| now.saturating_sub(t) <= replay_max_age)
+                .unwrap_or(false)
+        });
+        self.last_packet_seq.retain(|node, _| {
             replay_last_seen_tick
                 .get(node)
                 .map(|&t| now.saturating_sub(t) <= replay_max_age)
@@ -447,7 +497,7 @@ impl RoutingTable {
         // sequence numbers we've relayed -- if they resurface after that
         // long, treating their next packet as "not yet relayed" is correct
         // (they're being freshly rediscovered), same reasoning as
-        // `last_seen_seq`'s eviction above.
+        // `last_beacon_seq`'s eviction above.
         let relayed_seen_last_tick = &self.relayed_seen_last_tick;
         self.relayed_seen.retain(|node, _| {
             relayed_seen_last_tick
@@ -468,8 +518,9 @@ impl RoutingTable {
     /// the replay-sequence history, a captured old beacon/OGM from a peer that
     /// is currently out of range becomes replayable again the moment that peer
     /// reappears, and multi-hop sends to a still-reachable peer fail until a
-    /// fresh OGM has propagated. Persisting `last_seen_seq` alongside the routes
-    /// is therefore a security property, not just a convenience.
+    /// fresh OGM has propagated. Persisting the replay high-water marks
+    /// alongside the routes is therefore a security property, not just a
+    /// convenience.
     pub fn export_state(&self) -> PersistedRoutingState {
         let mut routes: Vec<(NodeId, Vec<PersistedRouteEntry>)> = self
             .routes
@@ -489,12 +540,19 @@ impl RoutingTable {
             .collect();
         routes.sort_by_key(|(dest, _)| *dest);
 
-        let mut last_seen_seq: Vec<(NodeId, u32)> = self
-            .last_seen_seq
+        let mut last_beacon_seq: Vec<(NodeId, u32)> = self
+            .last_beacon_seq
             .iter()
             .map(|(node, seq)| (*node, *seq))
             .collect();
-        last_seen_seq.sort_by_key(|(node, _)| *node);
+        last_beacon_seq.sort_by_key(|(node, _)| *node);
+
+        let mut last_packet_seq: Vec<(NodeId, u32)> = self
+            .last_packet_seq
+            .iter()
+            .map(|(node, seq)| (*node, *seq))
+            .collect();
+        last_packet_seq.sort_by_key(|(node, _)| *node);
 
         let mut replay_last_seen_tick: Vec<(NodeId, u64)> = self
             .replay_last_seen_tick
@@ -523,7 +581,8 @@ impl RoutingTable {
 
         PersistedRoutingState {
             routes,
-            last_seen_seq,
+            last_beacon_seq,
+            last_packet_seq,
             replay_last_seen_tick,
             current_tick: self.current_tick,
             relayed_seen,
@@ -556,7 +615,8 @@ impl RoutingTable {
                 (dest, entries)
             })
             .collect();
-        self.last_seen_seq = state.last_seen_seq.into_iter().collect();
+        self.last_beacon_seq = state.last_beacon_seq.into_iter().collect();
+        self.last_packet_seq = state.last_packet_seq.into_iter().collect();
         self.replay_last_seen_tick = state.replay_last_seen_tick.into_iter().collect();
         self.current_tick = state.current_tick;
         self.relayed_seen = state
@@ -581,7 +641,13 @@ pub struct PersistedRouteEntry {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PersistedRoutingState {
     pub routes: Vec<(NodeId, Vec<PersistedRouteEntry>)>,
-    pub last_seen_seq: Vec<(NodeId, u32)>,
+    pub last_beacon_seq: Vec<(NodeId, u32)>,
+    /// Added after the first release of the state format. `default` so a state
+    /// file written by the single-map version still loads -- it just starts
+    /// with no packet-space high-water marks, which is exactly the
+    /// pre-split (accepting) behaviour for that one field.
+    #[serde(default)]
+    pub last_packet_seq: Vec<(NodeId, u32)>,
     pub replay_last_seen_tick: Vec<(NodeId, u64)>,
     pub current_tick: u64,
     pub relayed_seen: Vec<(NodeId, Vec<u32>)>,
@@ -705,16 +771,104 @@ mod tests {
     #[test]
     fn test_process_beacon_unverified_does_not_influence_routing() {
         let mut table = RoutingTable::new(dummy_node_id(0xAA));
-        let beacon = dummy_beacon(dummy_node_id(0xBB), 1, 80);
+        let peer = dummy_node_id(0xBB);
+        let beacon = dummy_beacon(peer, 1, 80);
         // Even with good signal, an unverified beacon must not add a route.
         let changed = table.process_beacon(&beacon, -60, false);
         assert!(!changed);
-        assert!(table.get_best_route(&dummy_node_id(0xBB)).is_none());
-        // But it DOES advance last_seen_seq to prevent the same packet from
-        // being processed a second time if a late-arriving verified copy
-        // shows up -- confirmed by sending seq=1 again and checking rejection.
+        assert!(table.get_best_route(&peer).is_none());
+
+        // A late-arriving *verified* copy of the same sequence MUST be
+        // accepted.
+        //
+        // This previously asserted the opposite, on the reasoning that
+        // recording the unverified sequence would stop "the same packet being
+        // processed twice". That reasoning was wrong in a way that turned into
+        // a denial-of-service: the unverified sequence is proof of nothing,
+        // while the verified one carries a valid epoch-key MAC. Rejecting the
+        // authenticated beacon because an unauthenticated one claimed the
+        // same number first means anyone on the air can veto a peer's
+        // advertisement.
         let changed2 = table.process_beacon(&beacon, -60, true);
-        assert!(!changed2, "stale seq must be rejected even if now verified");
+        assert!(
+            changed2,
+            "a verified beacon must not be suppressed by an earlier unverified one"
+        );
+        assert!(table.get_best_route(&peer).is_some());
+    }
+
+    /// Regression test for the unauthenticated beacon-suppression attack.
+    ///
+    /// An off-mesh attacker who can transmit BLE advertisements (but does not
+    /// hold the mesh epoch key) forges beacons claiming a real peer's NodeId
+    /// with a very high sequence number. If those sequences advance the replay
+    /// high-water mark, every subsequent *genuine* beacon from that peer looks
+    /// like a replay and is dropped, so the peer becomes permanently
+    /// unroutable and its KeyAnnouncements stop being trusted.
+    #[test]
+    fn test_unverified_beacons_cannot_poison_the_replay_high_water_mark() {
+        let mut table = RoutingTable::new(dummy_node_id(0xAA));
+        let victim = dummy_node_id(0xBB);
+
+        // The attacker floods forged beacons for the victim's NodeId with
+        // monotonically increasing, very large sequences.
+        for seq in [100_000, 200_000, 900_000, u32::MAX - 1, u32::MAX] {
+            let forged = dummy_beacon(victim, seq, 90);
+            assert!(
+                !table.process_beacon(&forged, -50, false),
+                "forged beacon must never report a routing change"
+            );
+            assert!(
+                table.get_best_route(&victim).is_none(),
+                "forged beacon must not create a route"
+            );
+        }
+
+        // The victim now sends a genuine, correctly-sequenced beacon. Because
+        // the attacker's numbers were never recorded, this is accepted -- the
+        // victim is not silenced.
+        let genuine = dummy_beacon(victim, 42, 90);
+        assert!(
+            table.process_beacon(&genuine, -50, true),
+            "a forged high-sequence flood must not silence a real peer"
+        );
+        assert!(table.get_best_route(&victim).is_some());
+
+        // And replay protection still works against the *verified* stream:
+        // replaying that genuine beacon is rejected.
+        assert!(!table.process_beacon(&genuine, -50, true));
+    }
+
+    /// Regression test for the sequence-space collision between the beacon
+    /// counter (`adv_sequence`) and the signed-packet counter
+    /// (`ogm_sequence`).
+    ///
+    /// These are two independent counters on the sender. When they shared one
+    /// high-water mark, whichever ran ahead starved the other: a peer's OGM
+    /// carrying sequence 5 was rejected as "stale" immediately after its
+    /// beacon carrying sequence 50 was accepted, which silently broke
+    /// multi-hop route propagation shortly after startup.
+    #[test]
+    fn beacon_and_packet_sequences_do_not_starve_each_other() {
+        let mut table = RoutingTable::new(dummy_node_id(0xAA));
+        let peer = dummy_node_id(0xBB);
+
+        // Beacon stream is well ahead (adv_sequence = 500).
+        assert!(table.process_beacon(&dummy_beacon(peer, 500, 90), -55, true));
+
+        // The signed-packet stream is still early (ogm_sequence = 7). It must
+        // be judged against its own high-water mark, not the beacon's.
+        assert!(
+            table.process_ogm(&dummy_ogm_packet(peer, 7, 100, 0), -55),
+            "a low OGM sequence must not be starved by a high beacon sequence"
+        );
+
+        // Each space still enforces its own monotonicity.
+        assert!(!table.process_beacon(&dummy_beacon(peer, 499, 90), -55, true));
+        assert!(!table.process_ogm(&dummy_ogm_packet(peer, 6, 100, 0), -55));
+        // ...and both keep advancing independently afterwards.
+        assert!(table.process_ogm(&dummy_ogm_packet(peer, 8, 100, 0), -55));
+        assert!(table.process_beacon(&dummy_beacon(peer, 501, 90), -55, true));
     }
 
     #[test]

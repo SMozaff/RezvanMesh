@@ -212,19 +212,38 @@ impl MeshEngine {
         // after the payload.
         let needs_sig = matches!(header.packet_type, 0x01 | 0x03 | 0x04 | 0x05 | 0x06 | PACKET_TYPE_MESSAGE_ACK);
 
-        if needs_sig {
-            let expected_len = payload_end + MESH_PACKET_SIGNATURE_LEN;
-            if raw_packet.len() < expected_len {
-                return (None, vec![Action::DiagLog {
-                    tag: "RUST".into(),
-                    level: 3,
-                    message: format!(
-                        "Packet too short for signature: type={:#04x} len={} expected>={}",
-                        header.packet_type, raw_packet.len(), expected_len
-                    ),
-                }]);
-            }
+        // The frame must be *exactly* as long as the header claims, for signed
+        // and unsigned packet types alike.
+        //
+        // This used to be a `<` (minimum-length) check for signed types and no
+        // length check at all for 0x02, which meant any trailing bytes after
+        // the declared payload were silently ignored. That is a protocol
+        // strictness gap: two different byte strings can then mean the same
+        // packet, and a relay that re-serializes the header (see
+        // `build_relay_action`) emits the trimmed form, so the sender and the
+        // relaying hop disagree about the canonical encoding of one packet.
+        // For 0x02 it is worse than cosmetic -- extra bytes ride along
+        // unexamined, giving a future parser change somewhere to accidentally
+        // start interpreting attacker-chosen data.
+        //
+        // An exact check is safe for the relay path: `build_relay_action`
+        // copies `payload_len` and the payload unchanged (and only mutates
+        // ttl/hop_count for unsigned 0x02), so the total length is preserved.
+        let expected_len = payload_end
+            .checked_add(if needs_sig { MESH_PACKET_SIGNATURE_LEN } else { 0 })
+            .unwrap_or(usize::MAX);
+        if raw_packet.len() != expected_len {
+            return (None, vec![Action::DiagLog {
+                tag: "RUST".into(),
+                level: 3,
+                message: format!(
+                    "Packet length mismatch: type={:#04x} len={} expected={}",
+                    header.packet_type, raw_packet.len(), expected_len
+                ),
+            }]);
+        }
 
+        if needs_sig {
             let signed_bytes = &raw_packet[..payload_end];
             let sig_bytes = &raw_packet[payload_end..payload_end + MESH_PACKET_SIGNATURE_LEN];
             let mut sig = [0u8; 64];

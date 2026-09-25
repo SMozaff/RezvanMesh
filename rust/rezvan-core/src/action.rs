@@ -38,71 +38,136 @@ pub enum Action {
 /// currently-connected peer rather than resolving a specific NodeId to a MAC.
 pub const BROADCAST_TARGET: NodeId = [0u8; 8];
 
+/// Maximum actions in one frame -- the count is a single byte on the wire and
+/// is read back with `and 0xFF` on the Kotlin side, so a longer list would
+/// wrap and desynchronise the whole frame.
+pub const MAX_ACTIONS_PER_FRAME: usize = u8::MAX as usize;
+
+/// Maximum payload for a single action -- the length prefix is a `u16`.
+///
+/// This is a real ceiling, not a theoretical one. `NotifyUi` payloads embed a
+/// `DecryptedMessage`, whose own content length is a `u32`; a large text
+/// message or an inbound file chunk can therefore exceed 65535 bytes and
+/// overflow the `u16` prefix. When that happened the truncated length made
+/// Kotlin's `ActionDispatcher` mis-slice the frame, so every action *after*
+/// the oversized one was decoded from the wrong offset -- silently corrupting
+/// unrelated packets in the same frame.
+pub const MAX_ACTION_PAYLOAD: usize = u16::MAX as usize;
+
+/// Cap for the free-form strings inside a `DiagLog` action.
+///
+/// Diagnostics are not worth failing a frame over, so oversized strings are
+/// truncated rather than dropped. 1 KiB is far more than any diagnostic the
+/// engine produces, and it also guarantees the two internal `u16` length
+/// fields below can never overflow.
+const MAX_DIAG_FIELD: usize = 1024;
+
+/// Serialize a batch of actions into the wire format Kotlin's
+/// `ActionDispatcher` parses.
+///
+/// Two invariants this function is responsible for upholding:
+///
+/// * the action count fits in one byte, and
+/// * every payload length fits in a `u16` and matches the bytes actually
+///   written.
+///
+/// If an action cannot be represented, it is **skipped** rather than emitted
+/// with a truncated header. Skipping keeps the frame parseable: dropping the
+/// whole batch would mean one oversized diagnostic costing us a real packet
+/// that happened to be in the same frame, which is strictly worse.
 pub fn serialize_actions(actions: &[Action]) -> Vec<u8> {
     if actions.is_empty() {
         return vec![0u8];
     }
 
-    let mut buf = Vec::new();
-    buf.push(actions.len() as u8);
+    let mut body = Vec::new();
+    let mut kept = 0usize;
 
     for action in actions {
-        serialize_one(&mut buf, action);
+        if kept >= MAX_ACTIONS_PER_FRAME {
+            // Anything past the cap has nowhere to go in this frame; the next
+            // batch will carry it.
+            break;
+        }
+        if serialize_one(&mut body, action) {
+            kept += 1;
+        }
     }
+
+    if kept == 0 {
+        // Nothing survived -- emit the canonical empty frame so the caller
+        // still gets a well-formed (if useless) result rather than a lone
+        // count byte the Kotlin side would reject.
+        return vec![0u8];
+    }
+
+    let mut buf = Vec::with_capacity(1 + body.len());
+    buf.push(kept as u8);
+    buf.extend_from_slice(&body);
     buf
 }
 
-fn serialize_one(buf: &mut Vec<u8>, action: &Action) {
+/// Append one action. Returns `false` if it was skipped, either because its
+/// payload is unrepresentable in a `u16` or because the caller's budget was
+/// exhausted.
+fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
     match action {
         Action::SendBleAdvertisement { data } => {
-            buf.push(0x01);
             let payload = prepare_ble_adv_payload(data);
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
         Action::SendWifiPacket { ip, port, data } => {
-            buf.push(0x02);
+            if data.len() > MAX_ACTION_PAYLOAD - 6 {
+                return false;
+            }
             let mut payload = Vec::with_capacity(6 + data.len());
             payload.extend_from_slice(&ip.to_be_bytes());
             payload.extend_from_slice(&port.to_be_bytes());
             payload.extend_from_slice(data);
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
         Action::SendBlePacket { target, data } => {
-            buf.push(0x03);
+            if data.len() > MAX_ACTION_PAYLOAD - 8 {
+                return false;
+            }
             let mut payload = Vec::with_capacity(8 + data.len());
             payload.extend_from_slice(target);
             payload.extend_from_slice(data);
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
         Action::UpdateScanInterval { interval_ms, window_ms } => {
-            buf.push(0x04);
             let mut payload = Vec::with_capacity(8);
             payload.extend_from_slice(&interval_ms.to_be_bytes());
             payload.extend_from_slice(&window_ms.to_be_bytes());
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
         Action::NotifyUi { decrypted_message } => {
-            buf.push(0x05);
             let payload = decrypted_message.serialize();
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
         Action::DiagLog { tag, level, message } => {
-            buf.push(0x06);
-            let tag_bytes = tag.as_bytes();
-            let msg_bytes = message.as_bytes();
+            // Truncate rather than drop: a diagnostic is still useful when
+            // clipped, and clipping cannot overflow the inner length fields.
+            let tag_bytes: Vec<u8> = tag.as_bytes().iter().copied().take(MAX_DIAG_FIELD).collect();
+            let msg_bytes: Vec<u8> = message
+                .as_bytes()
+                .iter()
+                .copied()
+                .take(MAX_DIAG_FIELD)
+                .collect();
             let mut payload = Vec::with_capacity(1 + 2 + tag_bytes.len() + 2 + msg_bytes.len());
             payload.push(*level);
             payload.extend_from_slice(&(tag_bytes.len() as u16).to_be_bytes());
-            payload.extend_from_slice(tag_bytes);
+            payload.extend_from_slice(&tag_bytes);
             payload.extend_from_slice(&(msg_bytes.len() as u16).to_be_bytes());
-            write_payload(buf, &payload);
+            payload.extend_from_slice(&msg_bytes);
+            write_payload(buf, &payload)
         }
         Action::MessageAcknowledged { message_id, ack_sender } => {
-            buf.push(0x07);
             let mut payload = Vec::with_capacity(24);
             payload.extend_from_slice(message_id);
             payload.extend_from_slice(ack_sender);
-            write_payload(buf, &payload);
+            write_payload(buf, &payload)
         }
     }
 }
@@ -114,10 +179,17 @@ fn prepare_ble_adv_payload(data: &[u8]) -> Vec<u8> {
     fixed
 }
 
-fn write_payload(buf: &mut Vec<u8>, payload: &[u8]) {
-    let len = (payload.len() as u16).to_be_bytes();
-    buf.extend_from_slice(&len);
+/// Write a `u16` length prefix followed by the payload.
+///
+/// Returns `false` without writing anything when the payload is too large, so
+/// the caller can skip the action and keep the frame parseable.
+fn write_payload(buf: &mut Vec<u8>, payload: &[u8]) -> bool {
+    if payload.len() > MAX_ACTION_PAYLOAD {
+        return false;
+    }
+    buf.extend_from_slice(&(payload.len() as u16).to_be_bytes());
     buf.extend_from_slice(payload);
+    true
 }
 
 #[cfg(test)]
@@ -214,5 +286,174 @@ mod tests {
         let payload = &serialized[4..];
         let decoded = DecryptedMessage::deserialize(payload).unwrap();
         assert_eq!(decoded.timestamp, msg.timestamp);
+    }
+
+    // --- frame-integrity tests ------------------------------------------------
+    //
+    // The Kotlin side (`ActionDispatcher.dispatch`, and the hand-rolled parser
+    // in `RezvanRadioService.onPacketReceived`) walks the frame with a simple
+    // `offset += 3; offset += payloadLen` loop. If a serialized payload's
+    // declared length does not match the bytes actually written, that loop
+    // lands on the wrong offset and every action after the bad one is either
+    // mis-decoded or silently dropped.
+    //
+    // `parse_frame` below mirrors that loop exactly, so a serialization bug
+    // surfaces here as "did not consume the whole frame" rather than as a
+    // message that mysteriously never arrives on a real device.
+
+    /// Returns the parsed actions plus how many bytes the walk consumed.
+    fn parse_frame(frame: &[u8]) -> (Vec<(u8, Vec<u8>)>, usize) {
+        assert!(frame.len() >= 4, "frame too short: {} bytes", frame.len());
+        let count = frame[0] as usize;
+        let mut offset = 1usize;
+        let mut out = Vec::new();
+        for _ in 0..count {
+            assert!(offset + 3 <= frame.len(), "truncated action header at {offset}");
+            let ty = frame[offset];
+            let len = ((frame[offset + 1] as usize) << 8) | frame[offset + 2] as usize;
+            offset += 3;
+            assert!(
+                offset + len <= frame.len(),
+                "truncated action payload at {offset}, declared {len} bytes"
+            );
+            out.push((ty, frame[offset..offset + len].to_vec()));
+            offset += len;
+        }
+        (out, offset)
+    }
+
+    /// Regression test: the `DiagLog` payload declared a `message` length but
+    /// never wrote the message bytes, so every diagnostic action left the
+    /// frame walk short by exactly the message length. Since `DiagLog` is what
+    /// the engine emits for every packet rejection, a batch like
+    /// `[DiagLog, NotifyUi]` silently dropped the message.
+    #[test]
+    fn diaglog_payload_length_matches_the_bytes_written() {
+        let message = "KeyAnnouncement REJECTED: embedded key does not hash to claimed NodeId";
+        let actions = vec![Action::DiagLog {
+            tag: "RUST".into(),
+            level: 3,
+            message: message.into(),
+        }];
+        let frame = serialize_actions(&actions);
+        let (parsed, consumed) = parse_frame(&frame);
+
+        assert_eq!(consumed, frame.len(), "frame walk must consume the whole frame");
+        assert_eq!(parsed.len(), 1);
+        let (ty, payload) = &parsed[0];
+        assert_eq!(*ty, 0x06);
+        // [level:1][tag_len:2][tag][msg_len:2][msg]
+        assert_eq!(payload[0], 3);
+        let tag_len = ((payload[1] as usize) << 8) | payload[2] as usize;
+        assert_eq!(&payload[3..3 + tag_len], &b"RUST"[..]);
+        let msg_len_at = 3 + tag_len;
+        let msg_len = ((payload[msg_len_at] as usize) << 8) | payload[msg_len_at + 1] as usize;
+        assert_eq!(msg_len, message.len());
+        assert_eq!(
+            &payload[msg_len_at + 2..msg_len_at + 2 + msg_len],
+            message.as_bytes(),
+            "the message bytes must actually be present, not just counted"
+        );
+        assert_eq!(msg_len_at + 2 + msg_len, payload.len());
+    }
+
+    /// The bug above was only *visible* when a real action followed the
+    /// diagnostic. Assert that ordering explicitly, since this is the shape
+    /// that silently lost messages.
+    #[test]
+    fn a_diaglog_before_a_real_action_does_not_desync_the_frame() {
+        let msg = DecryptedMessage {
+            conversation_id: [0x01; 16],
+            sender_id: [0x02; 8],
+            timestamp: 99,
+            message_type: 0,
+            protocol_message_id: Some([0xAB; 16]),
+            content: b"important".to_vec(),
+        };
+        let actions = vec![
+            Action::DiagLog { tag: "RUST".into(), level: 1, message: "rejected something".into() },
+            Action::NotifyUi { decrypted_message: msg.clone() },
+        ];
+        let frame = serialize_actions(&actions);
+        let (parsed, consumed) = parse_frame(&frame);
+
+        assert_eq!(consumed, frame.len());
+        assert_eq!(parsed.len(), 2, "both actions must survive");
+        assert_eq!(parsed[0].0, 0x06);
+        assert_eq!(parsed[1].0, 0x05);
+        let decoded = DecryptedMessage::deserialize(&parsed[1].1).expect("second action decodes");
+        assert_eq!(decoded.content.as_slice(), &b"important"[..]);
+    }
+
+    /// A payload that cannot fit the `u16` length prefix must be skipped
+    /// without corrupting the frame, so the other actions in the batch still
+    /// reach Kotlin.
+    #[test]
+    fn an_unrepresentable_action_is_skipped_not_truncated() {
+        // 8 bytes of NodeId + oversized data would overflow the u16 prefix.
+        let actions = vec![
+            Action::SendBlePacket {
+                target: [0x11; 8],
+                data: vec![0xAA; MAX_ACTION_PAYLOAD],
+            },
+            Action::MessageAcknowledged { message_id: [0x01; 16], ack_sender: [0x22; 8] },
+        ];
+        let frame = serialize_actions(&actions);
+        let (parsed, consumed) = parse_frame(&frame);
+
+        assert_eq!(consumed, frame.len());
+        assert_eq!(
+            parsed.len(),
+            1,
+            "only the representable action should be emitted"
+        );
+        assert_eq!(parsed[0].0, 0x07, "the ACK must still be delivered");
+        assert_eq!(parsed[0].1.len(), 24);
+    }
+
+    /// An action list longer than the one-byte count field is capped rather
+    /// than wrapped -- wrapping would make Kotlin read the wrong action count
+    /// and mis-slice the entire frame.
+    #[test]
+    fn an_over_long_action_list_is_capped_at_the_count_field_limit() {
+        let many = vec![
+            Action::UpdateScanInterval { interval_ms: 1, window_ms: 1 };
+            MAX_ACTIONS_PER_FRAME + 10
+        ];
+        let frame = serialize_actions(&many);
+        assert_eq!(frame[0] as usize, MAX_ACTIONS_PER_FRAME);
+        let (parsed, consumed) = parse_frame(&frame);
+        assert_eq!(consumed, frame.len());
+        assert_eq!(parsed.len(), MAX_ACTIONS_PER_FRAME);
+    }
+
+    /// An oversized diagnostic is truncated, not dropped: a clipped log line is
+    /// still useful, and clipping cannot overflow the inner length fields.
+    #[test]
+    fn oversized_diaglog_strings_are_truncated_not_dropped() {
+        let huge = "x".repeat(MAX_DIAG_FIELD * 4);
+        let actions = vec![Action::DiagLog { tag: "T".into(), level: 2, message: huge }];
+        let frame = serialize_actions(&actions);
+        let (parsed, consumed) = parse_frame(&frame);
+
+        assert_eq!(consumed, frame.len());
+        assert_eq!(parsed.len(), 1, "a diagnostic must never be dropped entirely");
+        let payload = &parsed[0].1;
+        let tag_len = ((payload[1] as usize) << 8) | payload[2] as usize;
+        let msg_len_at = 3 + tag_len;
+        let msg_len = ((payload[msg_len_at] as usize) << 8) | payload[msg_len_at + 1] as usize;
+        assert_eq!(msg_len, MAX_DIAG_FIELD, "message clipped to the cap");
+        assert_eq!(msg_len_at + 2 + msg_len, payload.len());
+    }
+
+    /// A batch in which *nothing* is representable still yields the canonical
+    /// empty frame rather than a count byte with no body.
+    #[test]
+    fn a_fully_unrepresentable_batch_yields_the_empty_frame() {
+        let actions = vec![Action::SendBlePacket {
+            target: [0x11; 8],
+            data: vec![0xAA; MAX_ACTION_PAYLOAD + 1],
+        }];
+        assert_eq!(serialize_actions(&actions), vec![0u8]);
     }
 }

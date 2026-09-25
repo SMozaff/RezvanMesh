@@ -30,6 +30,7 @@ fun ChannelsScreen(
 ) {
     val channels by viewModel.allChannels.collectAsState(initial = emptyList())
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val createError by viewModel.createChannelError.collectAsState()
     var selectedChannel by remember { mutableStateOf<ChannelEntity?>(null) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var showJoinError by remember { mutableStateOf(false) }
@@ -74,6 +75,38 @@ fun ChannelsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            // A channel can be created in the database but be unusable (no
+            // sender key, because the mesh service was offline) or rejected
+            // outright (private with no password). Neither failure leaves a
+            // visible trace in the list, so say it here rather than letting the
+            // user find out by sending messages into a silent channel.
+            createError?.let { message ->
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = { viewModel.clearCreateChannelError() }) {
+                            Text(stringResource(R.string.close))
+                        }
+                    }
+                }
+            }
+
             if (channels.isEmpty() && !isRefreshing) {
                 Box(
                     modifier = Modifier.fillMaxSize(),

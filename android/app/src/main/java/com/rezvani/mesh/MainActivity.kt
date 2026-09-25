@@ -109,6 +109,20 @@ class MainActivity : ComponentActivity() {
         recheckAndStart()
     }
 
+    /**
+     * Wi-Fi Direct is a secondary transport, so denying this permission must
+     * not block the app the way a missing Bluetooth permission does -- BLE
+     * carries the mesh on its own. Requesting it is still necessary: without
+     * it, every WifiP2pManager call on Android 13+ throws SecurityException and
+     * the Wi-Fi path is dead with only a log line to show for it.
+     */
+    private val nearbyWifiLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.i(TAG, if (isGranted) "NEARBY_WIFI_DEVICES granted" else "NEARBY_WIFI_DEVICES denied")
+        recheckAndStart()
+    }
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as? RezvanRadioService.LocalBinder
@@ -247,6 +261,7 @@ class MainActivity : ComponentActivity() {
             btScanPermission = scanPerm,
             btAdvertisePermission = advPerm,
             btConnectPermission = connPerm,
+            nearbyWifiPermission = hasNearbyWifiPermission(),
             batteryUnrestricted = batteryOk
         )
     }
@@ -259,6 +274,8 @@ class MainActivity : ComponentActivity() {
             if (!hasAdvertisePermission()) bluetoothAdvertiseLauncher.launch(Manifest.permission.BLUETOOTH_ADVERTISE)
             if (!hasConnectPermission())   bluetoothConnectLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNearbyWifiPermission())
+            nearbyWifiLauncher.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
     }
 
     private fun openBtSettings() {
@@ -328,6 +345,11 @@ class MainActivity : ComponentActivity() {
 
     private fun hasLocationPermission() = ContextCompat.checkSelfPermission(
         this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun hasNearbyWifiPermission() =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+            ContextCompat.checkSelfPermission(
+                this, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+        else true
     private fun hasScanPermission() = ContextCompat.checkSelfPermission(
         this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
     private fun hasAdvertisePermission() = ContextCompat.checkSelfPermission(
@@ -427,6 +449,16 @@ data class PermissionCheckResult(
     val btScanPermission: Boolean = false,
     val btAdvertisePermission: Boolean = false,
     val btConnectPermission: Boolean = false,
+    /**
+     * NEARBY_WIFI_DEVICES, needed for Wi-Fi Direct on API 33+.
+     *
+     * Reported but deliberately excluded from [allGranted]: Wi-Fi Direct is a
+     * secondary transport, and BLE carries the mesh on its own. Blocking the
+     * whole app on a permission the user may reasonably refuse would be worse
+     * than having one transport instead of two. Always `true` below API 33,
+     * where location covers it.
+     */
+    val nearbyWifiPermission: Boolean = true,
     val batteryUnrestricted: Boolean = false
 ) {
     /** Essential prerequisites for mesh operation. Battery optimisation is a

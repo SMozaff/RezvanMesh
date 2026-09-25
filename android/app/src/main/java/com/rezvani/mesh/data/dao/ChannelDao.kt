@@ -57,6 +57,17 @@ interface ChannelDao {
     @Query("UPDATE channels SET name = :name, description = :description WHERE channelId = :channelId")
     suspend fun updateChannelInfo(channelId: Int, name: String, description: String)
 
+    /**
+     * Replace a stored password hash.
+     *
+     * Used only to migrate a legacy bare-SHA256 hash to the current salted
+     * PBKDF2 format at the moment the plaintext password happens to be
+     * available (a successful join). There is no way to re-hash offline,
+     * because the stored value is one-way.
+     */
+    @Query("UPDATE channels SET passwordHash = :passwordHash WHERE channelId = :channelId")
+    suspend fun updatePasswordHash(channelId: Int, passwordHash: String)
+
     @Query("DELETE FROM channels WHERE channelId = :channelId")
     suspend fun deleteById(channelId: Int)
 

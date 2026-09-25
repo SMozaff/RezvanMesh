@@ -29,11 +29,59 @@ object BleFragmenter {
     private const val ATT_OVERHEAD = 3   // opcode + attribute handle
     private const val MIN_USABLE = 20    // floor when MTU is unknown/tiny
 
-    /** Split a full packet into MTU-sized fragments. */
+    /**
+     * Largest logical packet that can be fragmented and successfully reassembled.
+     *
+     * This must match [BleReassembler]'s default `maxPacketBytes`. The sender
+     * used to impose no limit at all, which made oversized packets fail in two
+     * different silent ways:
+     *
+     * * A packet large enough to need more than 65 535 fragments had its
+     *   `total` field -- a `u16` on the wire -- wrap, so the receiver saw a
+     *   small `total` and discarded every fragment.
+     * * A packet over the receiver's 64 KiB cap was accepted fragment by
+     *   fragment and then dropped at the byte-count check, having already
+     *   consumed the receiver's reassembly budget.
+     *
+     * In both cases the sender believed it had queued the packet. Checking here
+     * lets the sender report a real failure instead.
+     */
+    const val MAX_PACKET_BYTES = 64 * 1024
+
+    /**
+     * Ceiling on the fragment count.
+     *
+     * Matches [BleReassembler]'s `maxFragments`. Chosen so a full 64 KiB
+     * packet always fits even at the smallest usable MTU, where a fragment
+     * carries only 12 payload bytes.
+     */
+    const val MAX_FRAGMENTS = 4_096
+
+    /**
+     * Whether a packet of [packetSize] bytes can be fragmented and reassembled.
+     *
+     * Callers must check this before queueing, so an oversized packet is
+     * reported as rejected rather than vanishing.
+     */
+    fun canFragment(packetSize: Int): Boolean = packetSize in 1..MAX_PACKET_BYTES
+
+    /**
+     * Split a full packet into MTU-sized fragments.
+     *
+     * Returns an empty list if the packet cannot be represented on the wire.
+     * Callers should use [canFragment] first so they can surface a failure;
+     * this check exists so the function cannot produce a corrupt `total` field
+     * even if a future caller forgets.
+     */
     fun fragment(packet: ByteArray, mtu: Int, msgId: Int): List<ByteArray> {
+        if (!canFragment(packet.size)) return emptyList()
+
         val usable = (mtu - ATT_OVERHEAD).coerceAtLeast(MIN_USABLE)
         val chunkSize = (usable - HEADER).coerceAtLeast(1)
         val total = ((packet.size + chunkSize - 1) / chunkSize).coerceAtLeast(1)
+        // Belt and braces: at the minimum chunk size an oversized packet could
+        // still exceed the fragment ceiling, and `total` is written as a u16.
+        if (total > MAX_FRAGMENTS) return emptyList()
 
         val out = ArrayList<ByteArray>(total)
         var offset = 0
@@ -61,8 +109,8 @@ object BleFragmenter {
 class BleReassembler(
     private val maxInFlight: Int = 8,
     private val timeoutMs: Long = 15_000L,
-    private val maxFragments: Int = 4_096,
-    private val maxPacketBytes: Int = 64 * 1024
+    private val maxFragments: Int = BleFragmenter.MAX_FRAGMENTS,
+    private val maxPacketBytes: Int = BleFragmenter.MAX_PACKET_BYTES
 ) {
     private class Partial(
         val total: Int,

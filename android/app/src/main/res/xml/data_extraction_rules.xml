@@ -1,7 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Opt out of both cloud backup and device-to-device transfer.
+
+  This is the file that actually matters, and the reason is a platform change
+  that is easy to get wrong: from Android 12 (API 31) onwards,
+  `android:allowBackup="false"` no longer disables *device-to-device* transfer.
+  Cloud backup is off, but a direct device-to-device migration still copies
+  `dataExtractionRules`-permitted data to the new device unless the rules
+  exclude it. The previous contents of this file included `sharedpref` and
+  `database` for cloud-backup and said nothing about device-transfer, so the
+  configuration was simultaneously redundant with `allowBackup="false"` and
+  silent about the case that was still live.
+
+  What would have been transferred: the SQLCipher-encrypted message/channel
+  database (unreadable elsewhere, since its passphrase is Keystore-wrapped and
+  non-exportable -- so this is a disclosure of ciphertext, not plaintext), the
+  `contacts.txt` list (which *is* plaintext), and the rolling diagnostic logs
+  under `getExternalFilesDir`, which contain peer NodeIds and truncated MAC
+  addresses.
+
+  For an app whose entire premise is that its traffic and topology are not
+  observable or exfiltrated, "the OS may quietly hand my contact list and peer
+  identifiers to my new phone, and possibly to a backup provider" is not a
+  defensible default. Excluding everything makes the intent explicit and
+  reviewable.
+
+  If backup is ever genuinely wanted, the right shape is a targeted allowlist
+  for user-visible data only -- never `sharedpref` (identity seed and DB
+  passphrase) and never `database`.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="sharedpref" path="." />
-        <include domain="database" path="." />
+        <exclude domain="root" path="." />
     </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
 </data-extraction-rules>

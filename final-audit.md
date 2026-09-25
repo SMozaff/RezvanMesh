@@ -2,64 +2,99 @@
 
 **Date:** 2026-09-25  
 **Scope:** Full codebase — Android/Kotlin frontend, Rust core (rezvan-core, rezvan-crypto, rezvan-common), CI, docs, tests  
-**Status:** Audit complete. 8 of 31 findings remediated (see *Remediation Status*).
+**Status:** Audit complete. 22 of 31 findings remediated. See *Remediation Status*.
 
 ---
 
 ## Remediation Status
 
-Eight findings from this report have been fixed in the working tree. Everything
-below reflects the state **after** those fixes unless a row says otherwise.
+| ID | Status | Where |
+|----|--------|-------|
+| **C01** | Fixed | `rust/rezvan-core/src/persistence.rs` (new), `session.rs`, `routing.rs`, `engine.rs`, `lib.rs`, `rezvan-crypto/src/secure_store.rs` (new), `RezvanRadioService.kt`, `MeshCore.kt` |
+| **C02** | Fixed | `rust/rezvan-core/src/lib.rs` — `Arc<Mutex<MeshEngine>>` registry replaces raw `&mut` casts |
+| **C03** | Fixed | `RezvanRadioService.kt`, `MainActivity.kt`, `MeshServiceConnection.kt` |
+| **C04** | Fixed | `RadioControllerImpl.kt` — `NODE_ID_OFFSET = 2` |
+| **C05** | Fixed | `BlePacketSender.kt` — rewritten; bounded queue, explicit success/failure |
+| **C06** | Fixed | `WifiPacketSender.kt`, `RadioControllerImpl.kt` |
+| **H02** | Fixed | `ChannelRepository.kt`, `ChannelQrCodec.kt` |
+| **H03** | Fixed | `ChannelPasswordHasher.kt` (new), `JoinThrottle.kt` (new), `ChannelRepository.kt`, `ChannelDao.kt`, `ChannelsViewModel.kt`, `CreateChannelScreen.kt`, `ChannelsScreen.kt` |
+| **H04** | Fixed | `routing.rs` — unverified beacons touch no state |
+| **H05** | Fixed | `ActionDispatcher.kt`, `RadioController.kt`, `RadioControllerImpl.kt` |
+| **M02** | Fixed | `engine.rs` — exact frame length for signed *and* unsigned packets |
+| **M03** | Fixed | `action.rs` — action-count and payload-length caps; **also fixed a frame-desync bug** (see N2) |
+| **M04** | Fixed | `hkdf.rs` — `MAX_OUTPUT_LEN` enforced |
+| **M06** | Fixed | `RadioControllerImpl.kt` — `ConcurrentLinkedQueue` + `computeIfAbsent` + per-peer cap |
+| **M07** | Fixed | `BleFragmenter.kt`, `BlePacketSender.kt` — shared size ceiling |
+| **M08** | Fixed | `AndroidManifest.xml`, `MainActivity.kt`, `RadioControllerImpl.kt` |
+| **M09** | Fixed | `MeshServiceConnection.kt` — bounded, O(1) window |
+| **M10** | Fixed | `FileStorageManager.kt` — name sanitisation + containment check |
+| **L02** | Fixed | `sender_key.rs` — stale "nothing calls this" doc |
+| **L03** | Fixed | `AppDatabase.kt` — wipe only on wrong-key evidence; rename not delete |
+| **L04** | Fixed | `data_extraction_rules.xml`, `backup_rules.xml` |
+| **L05** | Fixed | `RezvanApplication.kt` — crash dossier moved out of Downloads |
 
-| ID | Status | Where | Verified by |
-|----|--------|-------|--------------|
-| **C01** | **Fixed** | `rust/rezvan-core/src/persistence.rs` (new), `session.rs`, `routing.rs`, `engine.rs`, `lib.rs`, `rezvan-crypto/src/secure_store.rs` (new), `RezvanRadioService.kt`, `MeshCore.kt` | 8 new persistence unit tests + save/load round-trip asserting the Olm identity key survives a restart |
-| **C02** | **Fixed** | `rust/rezvan-core/src/lib.rs` — engines now live in an `Arc<Mutex<MeshEngine>>` registry instead of raw `&mut` casts | 4 new concurrency tests (`registry_tests`), incl. destroy-while-in-use |
-| **C03** | **Fixed** | `RezvanRadioService.kt`, `MainActivity.kt`, `MeshServiceConnection.kt` | Manual review; the native half is covered by the C02 tests |
-| **C04** | **Fixed** | `RadioControllerImpl.kt` — `NODE_ID_OFFSET = 2` | Manual review |
-| **C05** | **Fixed** | `BlePacketSender.kt` — rewritten with explicit success/failure signalling and a bounded queue | Manual review (needs a device to exercise) |
-| **C06** | **Fixed** | `WifiPacketSender.kt`, `RadioControllerImpl.kt` | Manual review |
-| **H02** | **Fixed** | `ChannelRepository.kt`, `ChannelQrCodec.kt` | New `ChannelQrCodecTest` (9 cases) |
-| **H05** | **Fixed** | `ActionDispatcher.kt`, `RadioController.kt`, `RadioControllerImpl.kt` | New `ActionDispatcherTest` (7 cases) |
+**Not remediated:** H01 (partially addressed by C01), M01, M05, M06's routing-side
+half (`relayed_seen` bounds), L01 (documented tradeoff), L07, L08, L09, L10.
 
-**Not yet remediated:** H01, H03, H04, and all M*/L* findings. H01 (channel-key
-persistence in the Room schema) is now *substantially* addressed by C01 — the
-keys now survive a restart via the engine state file — but the metadata and the
-key are still stored in two unrelated places, which is a design wart worth
-resolving separately.
+### New findings discovered during remediation
 
-### Verification performed
+These were not in the original 31. Each was found while fixing an adjacent
+defect, confirmed by reading the code, and fixed in the same pass.
 
-```
-rust/  cargo test              118 passed, 0 failed  (16 common + 68 core + 34 crypto)
-rust/  cargo clippy            clean for all new/changed code
-                                  (3 pre-existing errors remain in hkdf.rs and
-                                   rezvan-common/src/lib.rs; present before these
-                                   changes and non-blocking in CI)
-       scripts/verify_interfaces.py   passed — 20 Rust / 20 Kotlin externals matched
-```
+| ID | Severity | Finding | Where |
+|----|----------|---------|-------|
+| **N1** | **High** | **Multi-hop OGM propagation was silently broken.** `last_seen_seq` was a *single* high-water mark shared by two independent senders' counters: `adv_sequence` (beacons, every tick) and `ogm_sequence` (signed packets, only when one is built). Whichever ran ahead starved the other, so a peer's OGM carrying sequence 5 was rejected as "stale" immediately after its beacon carrying sequence 50 was accepted. Split into `last_beacon_seq` / `last_packet_seq`. | `routing.rs` |
+| **N2** | **High** | **`DiagLog` action desynchronised every frame that contained one.** The serializer wrote the message *length* but never the message *bytes*. Kotlin's `offset += payloadLen` walk then overshot, so any action after a diagnostic in the same batch was silently dropped — including `NotifyUi`. Since `DiagLog` is emitted for every packet rejection, a `[DiagLog, NotifyUi]` batch (e.g. a rejected packet alongside a valid message) lost the message. | `action.rs` |
+| **N3** | Medium | `pendingPacketsByMac` used `getOrPut` (not atomic on `ConcurrentHashMap`) on a `MutableList` (not thread-safe), so concurrent sends to one peer could discard each other's packets. | `RadioControllerImpl.kt` |
+| **N4** | Medium | `pendingPacketsByMac` was unbounded *and* unevicted for peers that never complete service discovery — a slow OOM at up to 64 KiB per queued packet. | `RadioControllerImpl.kt` |
+| **N5** | Medium | `MeshServiceConnection._receivedMessages` retained the full plaintext of every message the process ever decrypted, with no consumers, and copied the whole list on each arrival (quadratic). | `MeshServiceConnection.kt` |
+| **N6** | Medium | `FileStorageManager.readFile`/`deleteFile` took an arbitrary absolute path with no validation — a general-purpose "read/delete any file the app can" primitive. | `FileStorageManager.kt` |
+| **N7** | Medium | `AppDatabase.openOrRecreate` caught bare `Exception` and deleted the database unconditionally, so any unrelated bug on the open path (bad migration, SQL typo, out of space) destroyed all message history. | `AppDatabase.kt` |
+| **N8** | Medium | Crash dossiers (device fingerprint, git SHA, stack trace, 200 diag lines containing peer NodeIds and MAC fragments) were written to `MediaStore.Downloads` — user-visible, media-scanner-indexed, world-readable on older releases. | `RezvanApplication.kt` |
 
-### Known gaps in the verification
+### Verification
 
-- **The Android side was not compiled.** The Android SDK is absent and
-  `dl.google.com` is unreachable from this environment, so
-  `./gradlew :app:compileDebugKotlin` cannot resolve `com.android.application`.
-  The Kotlin changes (C03–C06, H02, H05) and the two new test files are
-  **unverified by a compiler**. Review them before merging.
-- `cargo fmt --check` still reports 138 pre-existing diffs repo-wide. The two
-  new Rust files were formatted; pre-existing files were left alone to avoid an
-  unrelated 138-hunk diff. CI treats this as non-blocking.
-- The C05/C06 transport fixes and the C01 persistence path have not been
-  exercised on a real device. `nativeSaveState`/`nativeInit`-with-restore in
-  particular need a two-session manual test.
+Verified by GitHub CI (per project instruction — no local builds or tests).
+
+Phase 1 (C01–C06, H02, H05) went through CI and passed, which required several
+follow-up commits to fix Kotlin compile errors in the new tests — so the Android
+side is genuinely compiled and unit-tested in CI, and "it builds" is a real
+signal here rather than an assumption.
+
+Phase 2 (this batch) is **not yet through CI**. Rust-side reasoning and
+brace/symbol/import consistency were checked by inspection, but nothing in this
+batch has been compiled or run.
+
+New tests added across both phases: 4 (JNI registry/concurrency), 8
+(persistence), 6 (action frame integrity), 5 (HKDF bounds), 2 (routing
+replay/sequence-space), 9 (`ChannelQrCodec`), 12 (`ChannelPasswordHasher`), 9
+(`JoinThrottle`), 7 (`ActionDispatcher`), 5 (fragmenter bounds).
+
+### Known gaps
+
+- **This batch has not been through CI yet.** Expect the same class of follow-up
+  fixes phase 1 needed. The riskiest spots, in the order I would look at them
+  if CI complains:
+  - `ChannelRepository.joinPrivateChannel` — the `Mutex`/`withLock` refactor
+    around suspend DAO calls. A `synchronized` block was the first attempt and
+    would not have compiled (non-suspend lambda).
+  - `ChannelPasswordHasherTest` — Kotlin string escaping in the malformed-input
+    table mixes `"$"` and `"\$"`; both are legal but worth an eyeball.
+  - `action.rs` tests — the byte-comparison assertions were written without a
+    compiler, so `assert_eq!` type inference is the thing to check.
+- The transport and persistence fixes (C01, C05, C06) have not been exercised on
+  a device. `nativeSaveState` and restore need a two-session manual test.
+- `cargo fmt --check` still reports 138 pre-existing diffs repo-wide; new Rust
+  files are formatted, pre-existing ones left alone. CI treats this as
+  non-blocking.
 
 ---
 
 ## Executive Summary
 
-RezvanMesh is an offline mesh messaging app with a **Kotlin/Android** frontend and **Rust** core (message encryption, routing, beacon auth, channel messaging). The codebase demonstrates solid cryptographic design in many areas (Olm E2EE, Gate 1 signed ACKs, sender-key group messaging, epoch-key beacon auth), but has **critical gaps in state persistence, service lifecycle safety, and transport-layer robustness** that would cause silent data loss, crashes, or security issues in production.
+RezvanMesh is an offline mesh messaging app with a **Kotlin/Android** frontend and **Rust** core (message encryption, routing, beacon auth, channel messaging). The codebase demonstrates solid cryptographic design in many areas (Olm E2EE, Gate 1 signed ACKs, sender-key group messaging, epoch-key beacon auth), but had **critical gaps in state persistence, service lifecycle safety, transport-layer robustness, and action-frame integrity** that caused silent data loss, crashes, and security issues.
 
-**Total findings: 31** (6 Critical, 5 High, 10 Medium, 10 Low/Latent)
+**Total findings: 31 original + 8 discovered during remediation = 39** (6 Critical, 7 High, 17 Medium, 10 Low/Latent)
 
 ---
 
@@ -224,17 +259,24 @@ RezvanMesh is an offline mesh messaging app with a **Kotlin/Android** frontend a
 
 ## Next Steps (Build Mode)
 
-This audit is complete. The findings above are evidence-backed with exact file:line references.
+**Done:** C01–C06, H02–H05, M02–M04, M06–M10, L02–L05 (22 original findings),
+plus 8 new findings found and fixed during the work.
 
-**Already done:** C01–C06, H02, H05 (8 findings). Remaining: H01, H03, H04, and
-all M*/L* findings — see the *Remediation Priority Order* section, which is
-still accurate for what's left.
+### Remaining, in rough priority order
 
-### Immediate Actions Available:
-1. **Compile the Android side** — the Kotlin changes are unverified; this is the
-   highest-value next step and is blocked only on an environment with the Android SDK.
-2. **H01** — Persist channel keys in the Room schema so the key and its metadata
-   live in one place (C01 makes them durable, but they're still split across two stores).
-3. **H04** — Move the replay-state update inside the `verified` block in `routing.rs`.
-4. **H03** — Require a password on private-channel creation; add salt + Argon2id.
-5. **Quick wins** — H05 is done; M02/M03/M04 are each a few lines in the Rust core.
+1. **Push this batch to CI.** Phase 2 is written but unverified; CI is the
+   reviewer.
+2. **H01** — Channel keys now survive restarts (C01), but the key and its
+   metadata still live in two unrelated stores. Consolidating the key into the
+   `channels` table would make "joined" and "can decrypt" the same fact instead
+   of two that can disagree.
+3. **L07** — `ContactsRepository` writes a plaintext `contacts.txt`. Move to Room
+   (already encrypted) and delete the file.
+4. **M05** — Align the BLE advertisement action to 24 bytes so it stops being
+   padded to 31 and truncated on every transmit.
+5. **M01 / L09** — Sequence-wrap and stale-doc items, both acceptable as-is.
+   Document the wraparound rather than adding wrap-aware comparison.
+6. **L10** — `sodiumoxide` → `libsodium-sys` migration, already tracked in
+   `rust/SODIUMOXIDE_MIGRATION.md`.
+7. **L08** — Collapse the 8-char `DiagLogger` session id to a full UUID; the
+   collision risk is negligible but the fix is trivial.

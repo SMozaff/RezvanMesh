@@ -7,6 +7,7 @@ import com.rezvani.mesh.data.AppDatabase
 import com.rezvani.mesh.data.DbKeyProvider
 import com.rezvani.mesh.data.entities.ChannelEntity
 import com.rezvani.mesh.data.repositories.ChannelRepository
+import com.rezvani.mesh.utils.DiagLogger
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -17,6 +18,23 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
 
     private val _allChannels = MutableStateFlow<List<ChannelEntity>>(emptyList())
     val allChannels: StateFlow<List<ChannelEntity>> = _allChannels.asStateFlow()
+
+    /**
+     * Why the last [createChannel] call did not fully succeed, or null if it
+     * did.
+     *
+     * Two distinct failures surface here: a private channel with no password
+     * (rejected outright), and a channel that was persisted while the mesh
+     * service was offline, so it has metadata but no sender key and cannot
+     * send or receive. The second is worth telling the user about -- otherwise
+     * they create a channel, it appears in the list, and it is silently dead.
+     */
+    private val _createChannelError = MutableStateFlow<String?>(null)
+    val createChannelError: StateFlow<String?> = _createChannelError.asStateFlow()
+
+    fun clearCreateChannelError() {
+        _createChannelError.value = null
+    }
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -63,13 +81,38 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
 
     fun createChannel(name: String, description: String, isPrivate: Boolean, password: String?) {
         viewModelScope.launch {
-            val channelId = channelRepo.createChannel(name, description, isPrivate, password)
+            // `createChannel` requires a password for a private channel. The UI
+            // disables the button in that case, but the repository is reachable
+            // from anywhere, so handle it here rather than letting the
+            // IllegalArgumentException tear down the coroutine and leave the
+            // user with a button that silently does nothing.
+            val channelId = runCatching {
+                channelRepo.createChannel(name, description, isPrivate, password)
+            }.getOrElse { error ->
+                DiagLogger.err("CHANNEL", "Channel creation rejected: ${error.message}", error)
+                _createChannelError.value = error.message
+                    ?: "A private channel needs a password before it can be created."
+                return@launch
+            }
+            _createChannelError.value = null
+
             // Generate the real shared sender-key for this channel now, so
             // send/receive works immediately -- previously ChannelRepository
             // only wrote local metadata and no crypto material existed at all.
             val key = com.rezvani.mesh.MeshServiceConnection.activeService?.createChannelKey(channelId)
             if (key != null) {
                 _lastCreatedChannelKey.value = channelId to key
+            } else {
+                // The channel exists in metadata but has no key, so it cannot
+                // send or receive. Say so instead of letting the user discover
+                // it later as "my channel is silent".
+                DiagLogger.err(
+                    "CHANNEL",
+                    "Channel $channelId created without a sender key; the mesh service is not running"
+                )
+                _createChannelError.value =
+                    "The channel was saved, but the mesh service is offline so it has no encryption key. " +
+                        "It will not be able to send or receive messages until the service is running and the channel is recreated."
             }
         }
     }

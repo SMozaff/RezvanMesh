@@ -29,10 +29,28 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
     private val dbPassphrase by lazy { DbKeyProvider.getOrCreateKey(context.applicationContext) }
     private val messageRepo by lazy { MessageRepository(context.applicationContext as Application, dbPassphrase) }
 
+    /**
+     * Bounded window of recently decrypted messages, for diagnostics and any
+     * future UI that wants it.
+     *
+     * Durable storage is [messageRepo] (Room); this list is *not* the store and
+     * nothing reads it. It previously grew without limit, keeping the full
+     * `content` ByteArray of every message the process ever decrypted -- on a
+     * busy mesh that is an unbounded plaintext retention in memory for no
+     * benefit, and `_receivedMessages.value = _receivedMessages.value + msg`
+     * copied the whole list on every arrival, so it was quadratic in the
+     * session's message count as well.
+     *
+     * Bounded to a small recent window with drop-oldest, which keeps it useful
+     * for debugging "what just came in" without becoming a leak.
+     */
     private val _receivedMessages = MutableStateFlow<List<DecryptedMessage>>(emptyList())
     val receivedMessages: StateFlow<List<DecryptedMessage>> = _receivedMessages
 
     companion object {
+        /** How many recent messages [receivedMessages] retains. */
+        private const val MAX_RECEIVED_MESSAGE_WINDOW = 64
+
         val nodeCount      = MutableStateFlow(0)
         val signalStrength = MutableStateFlow("-68 dBm")
         val batteryLevel   = MutableStateFlow(100)
@@ -90,7 +108,12 @@ class MeshServiceConnection(private val context: Context) : ServiceConnection {
      * acknowledged by the radio service.
      */
     suspend fun addReceivedMessage(msg: DecryptedMessage): ReceiptAcknowledgementRequest? {
-        _receivedMessages.value = _receivedMessages.value + msg
+        // Drop-oldest via an ArrayDeque so this stays O(1) instead of copying
+        // the whole list on every inbound message.
+        _receivedMessages.value = buildList(_receivedMessages.value.size + 1) {
+            addAll(_receivedMessages.value.takeLast(MAX_RECEIVED_MESSAGE_WINDOW - 1))
+            add(msg)
+        }
         return try {
             val senderHex = msg.senderId.joinToString("") { "%02x".format(it) }
             val messageType = msg.messageType.toInt() and 0xFF

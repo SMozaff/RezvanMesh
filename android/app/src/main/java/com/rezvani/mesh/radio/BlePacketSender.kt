@@ -94,14 +94,32 @@ class BlePacketSender(
         }
 
         val maxWholeWrite = (negotiatedMtu - ATT_OVERHEAD).coerceAtLeast(20)
-        val writes = if (data.size <= maxWholeWrite) {
-            listOf(data)
+        val writes: List<ByteArray>
+        if (data.size <= maxWholeWrite) {
+            writes = listOf(data)
         } else {
-            BleFragmenter.fragment(
+            // Refuse rather than fragment: the fragment header can only describe
+            // a bounded message, so anything larger would arrive corrupt or
+            // truncated. Reporting failure here is what lets the caller mark
+            // the message unsent instead of it vanishing.
+            if (!BleFragmenter.canFragment(data.size)) {
+                Log.e(
+                    TAG,
+                    "Packet of ${data.size} bytes exceeds the fragmentable maximum " +
+                        "(${BleFragmenter.MAX_PACKET_BYTES}), rejecting"
+                )
+                return false
+            }
+            val fragments = BleFragmenter.fragment(
                 packet = data,
                 mtu = negotiatedMtu,
                 msgId = nextMessageId.getAndUpdate { (it + 1) and 0xFFFF }
             )
+            if (fragments.isEmpty()) {
+                Log.e(TAG, "Fragmentation produced no fragments for ${data.size} bytes")
+                return false
+            }
+            writes = fragments
         }
 
         var enqueued = 0

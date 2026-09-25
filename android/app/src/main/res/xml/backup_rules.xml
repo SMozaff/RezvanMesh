@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exclude everything from cloud backup.
+
+  `android:allowBackup="false"` already disables cloud backup, and
+  `android:fullBackupContent="false"` in the manifest takes precedence over
+  this file, so this rule is not currently consulted. It is kept as
+  defence-in-depth: the previous contents of this file opted *in* to
+  everything (`<include domain="... " path="."/>` for sharedpref, database and
+  file), which meant that removing the `"false"` override -- a one-character
+  edit that looks harmless -- would have started shipping the encrypted
+  database, the Keystore-wrapped identity seed preferences, and the plaintext
+  contacts list into Google backup. A file that silently does the opposite of
+  what the surrounding configuration says is a trap; this one now agrees with it.
+
+  Device-to-device transfer is governed separately, by data_extraction_rules.xml.
+-->
 <full-backup-content>
-    <include domain="sharedpref" path="." />
-    <include domain="database" path="." />
-    <include domain="file" path="." />
+    <exclude domain="root" path="." />
 </full-backup-content>

@@ -13,6 +13,7 @@ import com.rezvani.mesh.data.entities.ChannelEntity
 import com.rezvani.mesh.data.entities.ContactEntity
 import com.rezvani.mesh.data.entities.MessageEntity
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import java.io.File
 
 /**
  * Main Room database for Rezvan Mesh.
@@ -71,27 +72,109 @@ abstract class AppDatabase : RoomDatabase() {
          * passphrase. Pre-fix beta builds all shared one hardcoded passphrase,
          * so an existing on-disk database from before this fix will not open
          * with the new random key. Since this is pre-1.0 beta with no server
-         * backup, we wipe the old encrypted file and start fresh rather than
-         * crash the app -- but we flag it via [wasWiped] so the UI can show
-         * the user a one-time "local history was reset for a security fix"
+         * backup, we move the old encrypted file aside and start fresh rather
+         * than crash the app -- but we flag it via [wasWiped] so the UI can
+         * show the user a one-time "local history was reset for a security fix"
          * notice instead of silently discarding their messages.
+         *
+         * The old file is *renamed*, not deleted, so it remains on disk under a
+         * `.undecryptable-<timestamp>` name. Nothing in the app can read it
+         * (that is the whole point), but it is not destroyed either, which
+         * matters more than it sounds: the passphrase it was written with is
+         * gone, so the data is unrecoverable by us -- but if a future bug means
+         * we wiped for the *wrong* reason, an operator can still get the file
+         * off the device.
          */
         @Volatile
         var wasWiped: Boolean = false
             private set
 
+        /**
+         * Substrings that identify "this file is not decryptable with the key we
+         * have" as opposed to "something else went wrong".
+         *
+         * SQLCipher surfaces a wrong key as SQLite reports a header it does not
+         * recognise, so the message text is the only signal available. Matching
+         * on it is unpleasant, but matching on the *exception type* alone is
+         * not enough: a failed migration, a missing table, and a genuine
+         * SQLCipher error can all arrive as the same class.
+         */
+        private val UNDECRYPTABLE_MARKERS = listOf(
+            "file is not a database",
+            "file is encrypted or is not a database",
+            "unsupported file format",
+            "database disk image is malformed"
+        )
+
+        /**
+         * Open the database, and wipe it only if it genuinely cannot be
+         * decrypted with the supplied passphrase.
+         *
+         * This previously caught `Exception` and deleted the database file
+         * unconditionally. That made a routine bug anywhere on the path to
+         * `open()` -- a bad migration, a SQL typo in a DAO query, a missing
+         * table, an I/O error while the device is out of space -- silently
+         * destroy every stored message, and then still throw if the rebuild
+         * failed for the same underlying reason. The user saw their history
+         * vanish with no explanation and no way back.
+         *
+         * Now the file is only discarded when the evidence says the problem is
+         * the key, and even then it is *renamed* rather than deleted so the
+         * data is still recoverable off-device.
+         */
         private fun openOrRecreate(context: Context, passphrase: ByteArray): AppDatabase {
             return try {
                 buildDatabase(context, passphrase)
             } catch (e: Exception) {
-                val dbFile = context.applicationContext.getDatabasePath(DATABASE_NAME)
-                if (dbFile.exists()) {
-                    context.applicationContext.deleteDatabase(DATABASE_NAME)
-                    wasWiped = true
+                if (!isUndecryptable(e)) throw e
+
+                val appContext = context.applicationContext
+                val dbFile = appContext.getDatabasePath(DATABASE_NAME)
+                if (!dbFile.exists()) throw e
+
+                // Move aside instead of deleting. `deleteDatabase` also removes
+                // the -wal and -shm sidecars; renaming only the main file would
+                // leave a stale WAL that SQLite could try to replay, so all
+                // three go.
+                val stamp = System.currentTimeMillis()
+                for (suffix in listOf("", "-wal", "-shm")) {
+                    val f = File(dbFile.path + suffix)
+                    if (f.exists()) {
+                        val renamed = File(f.parentFile, "${f.name}.undecryptable-$stamp")
+                        if (!f.renameTo(renamed)) {
+                            // Could not preserve it; fall back to a real delete so
+                            // we do not leave a file we cannot open in place.
+                            appContext.deleteDatabase(DATABASE_NAME)
+                            break
+                        }
+                    }
                 }
+                wasWiped = true
                 buildDatabase(context, passphrase)
             }
         }
+
+        /**
+         * Whether this throwable indicates the database file cannot be read
+         * with the current passphrase.
+         *
+         * Walks the cause chain because SQLCipher/Room wrap the underlying
+         * SQLite error, so the useful message is usually not on the outermost
+         * exception.
+         */
+        private fun isUndecryptable(t: Throwable): Boolean {
+            var current: Throwable? = t
+            var depth = 0
+            while (current != null && depth < MAX_CAUSE_DEPTH) {
+                val message = current.message?.lowercase().orEmpty()
+                if (UNDECRYPTABLE_MARKERS.any { message.contains(it) }) return true
+                current = current.cause
+                depth++
+            }
+            return false
+        }
+
+        private const val MAX_CAUSE_DEPTH = 16
 
         /**
          * Whether `System.loadLibrary("sqlcipher")` has been called yet.

@@ -191,10 +191,18 @@ fun CreateChannelScreen(
                             name = name,
                             description = description,
                             isPrivate = isPrivate,
+                            // A private channel with a blank password would be
+                            // created with no hash at all, and the join path
+                            // treats a missing hash as "cannot verify" and
+                            // refuses. That is the correct security posture,
+                            // but it produces a channel nobody can ever join,
+                            // so block it at the point of entry instead.
                             password = password.ifBlank { null }
                         )
                     },
-                    enabled = name.isNotBlank(),
+                    // Require a password whenever "private" is on, so the user
+                    // cannot create an unusable channel.
+                    enabled = name.isNotBlank() && (!isPrivate || password.isNotBlank()),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.create_channel))

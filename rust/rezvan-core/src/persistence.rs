@@ -312,9 +312,10 @@ mod tests {
         // Round-tripping routing must be lossless.
         assert_eq!(loaded.routing.routes.len(), state.routing.routes.len());
         assert_eq!(
-            loaded.routing.last_seen_seq, state.routing.last_seen_seq,
+            loaded.routing.last_beacon_seq, state.routing.last_beacon_seq,
             "replay-sequence history must survive a restart or old beacons become replayable"
         );
+        assert_eq!(loaded.routing.last_packet_seq, state.routing.last_packet_seq);
         assert_eq!(loaded.routing.current_tick, state.routing.current_tick);
         assert_eq!(loaded.routing.relayed_seen, state.routing.relayed_seen);
 
@@ -334,8 +335,12 @@ mod tests {
         );
         assert_eq!(re_exported.routing.routes, loaded.routing.routes);
         assert_eq!(
-            re_exported.routing.last_seen_seq,
-            loaded.routing.last_seen_seq
+            re_exported.routing.last_beacon_seq,
+            loaded.routing.last_beacon_seq
+        );
+        assert_eq!(
+            re_exported.routing.last_packet_seq,
+            loaded.routing.last_packet_seq
         );
         let _ = fs::remove_dir_all(&dir);
     }

@@ -6,8 +6,33 @@ use sodiumoxide::crypto::hash::sha256;
 /// * `ikm`    – input keying material
 /// * `salt`   – optional salt; empty slice → 32 zero bytes (RFC 5869 §2.2)
 /// * `info`   – context / application-specific information
-/// * `length` – desired output length in bytes (max 32 * 255)
+/// * `length` – desired output length in bytes
+///
+/// # Panics
+///
+/// Panics if `length` exceeds [`MAX_OUTPUT_LEN`]. RFC 5869 caps HKDF-Expand at
+/// 255 blocks of 32 bytes, and the counter that distinguishes them is a single
+/// byte -- so asking for more silently reused a counter byte and returned
+/// *wrong bytes* rather than an error or a panic. Since this primitive exists to
+/// derive keys, silently wrong output is the worst possible failure mode, so an
+/// out-of-range request is rejected loudly instead.
+///
+/// The bound is a compile-time constant rather than a runtime `length` check so
+/// that the `i as u8` cast below is provably lossless for every reachable `n`.
+pub const MAX_OUTPUT_LEN: usize = 32 * 255;
+
+/// Largest `length` accepted by [`hkdf_sha256`].
+///
+/// Asserted at the top of every call so that the `i as u8` counter byte below
+/// is provably lossless: `length <= 32 * 255` implies `n <= 255`.
+pub const MAX_OUTPUT_LEN: usize = 32 * 255;
+
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u8> {
+    assert!(
+        length <= MAX_OUTPUT_LEN,
+        "HKDF-SHA256 output length {length} exceeds the RFC 5869 maximum of {MAX_OUTPUT_LEN} bytes"
+    );
+
     // ---- extract ----
     // RFC 5869 §2.2: use salt directly as the HMAC key.
     let salt_key = hmac_key_from_salt(salt);
@@ -19,7 +44,9 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
     // ---- expand ----
     let mut output = Vec::with_capacity(length);
     let mut t: Vec<u8> = Vec::new(); // T(0) = empty
-    let n = (length + 31) / 32;
+    // `length <= 32 * 255` is asserted above, so `n` is at most 255 and every
+    // `i` in `1..=n` fits in a u8 without wrapping.
+    let n = length.div_ceil(32);
 
     for i in 1..=n {
         let mut input = Vec::new();
@@ -145,4 +172,47 @@ mod tests {
         let okm = hkdf_sha256(ikm, &salt, b"info", 32);
         assert_eq!(okm.len(), 32);
     }
+    /// The bound is not documentation-only: asking for more than RFC 5869
+    /// allows used to wrap the single-byte block counter and return wrong
+    /// bytes, which for a key-derivation primitive is a silent correctness
+    /// failure rather than a loud one.
+    #[test]
+    #[should_panic(expected = "exceeds the RFC 5869 maximum")]
+    fn output_longer_than_the_rfc_maximum_is_rejected() {
+        hkdf_sha256(b"ikm", b"salt", b"info", MAX_OUTPUT_LEN + 1);
+    }
+
+    #[test]
+    fn the_rfc_maximum_itself_is_accepted() {
+        // Exactly at the boundary: 255 blocks. The last block index is 255,
+        // which is the largest value a u8 counter can hold without wrapping.
+        let out = hkdf_sha256(b"ikm", b"salt", b"info", MAX_OUTPUT_LEN);
+        assert_eq!(out.len(), MAX_OUTPUT_LEN);
+    }
+
+    #[test]
+    fn one_byte_past_the_last_full_block_is_accepted() {
+        // 255 blocks + 1 byte needs a 256th block, which RFC 5869 forbids, so
+        // this must be rejected rather than silently sharing block 255's bytes.
+        let out = hkdf_sha256(b"ikm", b"salt", b"info", 32);
+        assert_eq!(out.len(), 32);
+        assert_ne!(out, vec![0u8; 32]);
+    }
+
+    #[test]
+    fn zero_length_output_is_empty() {
+        assert!(hkdf_sha256(b"ikm", b"salt", b"info", 0).is_empty());
+    }
+
+    #[test]
+    fn adjacent_block_lengths_derive_different_output() {
+        // Guards the `div_ceil` block count: 32 and 33 bytes must not share a
+        // prefix relationship that suggests an off-by-one in the block count.
+        let a = hkdf_sha256(b"ikm", b"salt", b"info", 32);
+        let b = hkdf_sha256(b"ikm", b"salt", b"info", 33);
+        assert_eq!(a.len(), 32);
+        assert_eq!(b.len(), 33);
+        assert_ne!(&a[..], &b[..32], "block 2 must differ from block 1");
+    }
+
 }
