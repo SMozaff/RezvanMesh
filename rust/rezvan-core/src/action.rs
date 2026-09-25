@@ -114,7 +114,7 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
     match action {
         Action::SendBleAdvertisement { data } => {
             let payload = prepare_ble_adv_payload(data);
-            write_payload(buf, &payload)
+            write_action(buf, 1, &payload)
         }
         Action::SendWifiPacket { ip, port, data } => {
             if data.len() > MAX_ACTION_PAYLOAD - 6 {
@@ -124,7 +124,7 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             payload.extend_from_slice(&ip.to_be_bytes());
             payload.extend_from_slice(&port.to_be_bytes());
             payload.extend_from_slice(data);
-            write_payload(buf, &payload)
+            write_action(buf, 2, &payload)
         }
         Action::SendBlePacket { target, data } => {
             if data.len() > MAX_ACTION_PAYLOAD - 8 {
@@ -133,17 +133,17 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             let mut payload = Vec::with_capacity(8 + data.len());
             payload.extend_from_slice(target);
             payload.extend_from_slice(data);
-            write_payload(buf, &payload)
+            write_action(buf, 3, &payload)
         }
         Action::UpdateScanInterval { interval_ms, window_ms } => {
             let mut payload = Vec::with_capacity(8);
             payload.extend_from_slice(&interval_ms.to_be_bytes());
             payload.extend_from_slice(&window_ms.to_be_bytes());
-            write_payload(buf, &payload)
+            write_action(buf, 4, &payload)
         }
         Action::NotifyUi { decrypted_message } => {
             let payload = decrypted_message.serialize();
-            write_payload(buf, &payload)
+            write_action(buf, 5, &payload)
         }
         Action::DiagLog { tag, level, message } => {
             // Truncate rather than drop: a diagnostic is still useful when
@@ -161,13 +161,13 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             payload.extend_from_slice(&tag_bytes);
             payload.extend_from_slice(&(msg_bytes.len() as u16).to_be_bytes());
             payload.extend_from_slice(&msg_bytes);
-            write_payload(buf, &payload)
+            write_action(buf, 6, &payload)
         }
         Action::MessageAcknowledged { message_id, ack_sender } => {
             let mut payload = Vec::with_capacity(24);
             payload.extend_from_slice(message_id);
             payload.extend_from_slice(ack_sender);
-            write_payload(buf, &payload)
+            write_action(buf, 7, &payload)
         }
     }
 }
@@ -197,6 +197,17 @@ fn prepare_ble_adv_payload(data: &[u8]) -> Vec<u8> {
 ///
 /// Returns `false` without writing anything when the payload is too large, so
 /// the caller can skip the action and keep the frame parseable.
+fn write_action(buf: &mut Vec<u8>, action_type: u8, payload: &[u8]) -> bool {
+    if payload.len() > MAX_ACTION_PAYLOAD {
+        return false;
+    }
+    buf.push(action_type);
+    buf.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    buf.extend_from_slice(payload);
+    true
+}
+
+#[allow(dead_code)]
 fn write_payload(buf: &mut Vec<u8>, payload: &[u8]) -> bool {
     if payload.len() > MAX_ACTION_PAYLOAD {
         return false;
