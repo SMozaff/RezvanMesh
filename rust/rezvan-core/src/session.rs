@@ -245,13 +245,38 @@ impl SessionManager {
 
     // --- serverless key-bundle exchange -------------------------------------
 
-    /// Our bundle to advertise: Olm identity key (32) ++ Olm one-time key (32)
-    /// ++ mesh X25519 identity key (32) ++ mesh Ed25519 identity key (32) =
-    /// 128 bytes total. Kotlin broadcasts this in a KeyAnnouncement and
-    /// embeds it in the QR code. The mesh identity keys (last 64 bytes) are
-    /// what let peers verify beacon MACs and MeshPacketHeader signatures
-    /// (security audit finding #3 / Fix 3) -- they were not previously
-    /// exchanged at all.
+    /// Our bundle to advertise, in full. Kotlin broadcasts this in a
+    /// KeyAnnouncement (packet type 0x05) and embeds it in the QR code.
+    ///
+    /// ```text
+    /// offset  size  field
+    ///      0    32  Olm identity key (curve25519)
+    ///     32    32  Olm one-time key
+    ///     64    32  mesh X25519 identity key   (beacon MAC derivation)
+    ///     96    32  mesh Ed25519 identity key  (packet signatures)
+    ///    128     4  beacon epoch number, big-endian
+    ///    132    32  beacon epoch key
+    ///    --- 164 bytes: the mandatory bundle ---
+    ///    164     1  capability format version
+    ///    165     4  capability bitmask, big-endian
+    ///    --- 169 bytes: what `key_bundle` actually emits ---
+    /// ```
+    ///
+    /// The mesh identity keys at offsets 64..128 are what let peers verify
+    /// beacon MACs and `MeshPacketHeader` signatures (security audit finding
+    /// #3 / Fix 3) -- before this they were never exchanged at all.
+    ///
+    /// The trailing 5 bytes are the backward-compatible Gate 1 capability
+    /// extension. `register_peer_keys` accepts either length and treats a
+    /// 164-byte bundle as legacy (no capabilities), which is why
+    /// `supports_message_id_ack` returns false for a legacy peer rather than
+    /// erroring.
+    ///
+    /// The offset of the embedded Ed25519 key (96) is load-bearing in
+    /// `engine.rs`'s self-authenticating KeyAnnouncement check, which verifies
+    /// the signature *after* extracting the key it is about to trust, and then
+    /// checks that `compute_node_id(key) == header.originator`. Changing the
+    /// layout means changing that offset too.
     ///
     /// One-time-key hygiene (security audit finding #9, later re-fixed): the
     /// original version of this function always returned

@@ -2,7 +2,7 @@ use rezvan_common::{DecryptedMessage, MessageId, NodeId};
 
 #[derive(Debug, Clone)]
 pub enum Action {
-    /// Send a 31‑byte BLE advertisement.
+    /// Send a BLE advertisement carrying an `AdvBeaconExt` payload.
     SendBleAdvertisement { data: Vec<u8> },
 
     /// Send a raw packet over Wi‑Fi Direct.
@@ -172,9 +172,23 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
     }
 }
 
+/// Pad/truncate an advertisement payload to the legacy BLE advertising budget.
+///
+/// The platform budget is 31 bytes of *advertising data* total, but that is not
+/// what this field is: three bytes go to the flags AD structure and two to the
+/// manufacturer-ID envelope, leaving 24 bytes of actual manufacturer data --
+/// which is exactly `AdvBeaconExt::SIZE`.
+///
+/// This used to pad to 31, so every advertisement was serialised with 7 bytes
+/// of zeros, crossed the JNI boundary, and was then truncated straight back to
+/// 24 on the Android side (`RadioControllerImpl.startLegacyAdvertising` logs
+/// `dropped=7` on every start). Nothing was broken, but it wasted an
+/// allocation and a copy per advertise cycle on a battery-powered device, and
+/// the mismatch between the two numbers is a trap for the next reader.
 fn prepare_ble_adv_payload(data: &[u8]) -> Vec<u8> {
-    let mut fixed = vec![0u8; 31];
-    let len = data.len().min(31);
+    use rezvan_common::AdvBeaconExt;
+    let mut fixed = vec![0u8; AdvBeaconExt::SIZE];
+    let len = data.len().min(AdvBeaconExt::SIZE);
     fixed[..len].copy_from_slice(&data[..len]);
     fixed
 }
@@ -205,14 +219,33 @@ mod tests {
 
     #[test]
     fn test_serialize_ble_advertisement() {
+        // The payload must be exactly AdvBeaconExt::SIZE so nothing is padded
+        // on one side and truncated on the other.
+        let size = rezvan_common::AdvBeaconExt::SIZE;
         let actions = vec![Action::SendBleAdvertisement {
-            data: vec![0xAB; 31],
+            data: vec![0xAB; size],
         }];
         let serialized = serialize_actions(&actions);
         assert_eq!(serialized[0], 1);
         assert_eq!(serialized[1], 0x01);
-        assert_eq!(u16::from_be_bytes([serialized[2], serialized[3]]), 31);
-        assert_eq!(serialized.len(), 1 + 1 + 2 + 31);
+        assert_eq!(u16::from_be_bytes([serialized[2], serialized[3]]) as usize, size);
+        assert_eq!(serialized.len(), 1 + 1 + 2 + size);
+    }
+
+    /// An over-long advertisement payload is truncated to the exact wire size,
+    /// never padded beyond it. Regression test for the old 31-byte padding,
+    /// which shipped 7 zero bytes per advertise cycle that Android immediately
+    /// discarded.
+    #[test]
+    fn advertisement_payload_is_exactly_the_wire_size() {
+        for input in [0usize, 1, 23, 24, 25, 31, 64] {
+            let actions = vec![Action::SendBleAdvertisement { data: vec![0x5A; input] }];
+            let serialized = serialize_actions(&actions);
+            let declared = u16::from_be_bytes([serialized[2], serialized[3]]) as usize;
+            let expected = input.min(rezvan_common::AdvBeaconExt::SIZE);
+            assert_eq!(declared, expected, "input {input}");
+            assert_eq!(serialized.len(), 1 + 1 + 2 + expected, "input {input}");
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-25  
 **Scope:** Full codebase — Android/Kotlin frontend, Rust core (rezvan-core, rezvan-crypto, rezvan-common), CI, docs, tests  
-**Status:** Audit complete. 22 of 31 findings remediated. See *Remediation Status*.
+**Status:** Audit complete. 30 of 31 findings remediated. See *Remediation Status*.
 
 ---
 
@@ -16,14 +16,17 @@
 | **C04** | Fixed | `RadioControllerImpl.kt` — `NODE_ID_OFFSET = 2` |
 | **C05** | Fixed | `BlePacketSender.kt` — rewritten; bounded queue, explicit success/failure |
 | **C06** | Fixed | `WifiPacketSender.kt`, `RadioControllerImpl.kt` |
+| **H01** | Fixed | `ChannelEntity.kt` (+`senderKey` column), `ChannelDao.kt`, `ChannelRepository.kt`, `ChannelsViewModel.kt`, `RezvanRadioService.kt` |
 | **H02** | Fixed | `ChannelRepository.kt`, `ChannelQrCodec.kt` |
 | **H03** | Fixed | `ChannelPasswordHasher.kt` (new), `JoinThrottle.kt` (new), `ChannelRepository.kt`, `ChannelDao.kt`, `ChannelsViewModel.kt`, `CreateChannelScreen.kt`, `ChannelsScreen.kt` |
 | **H04** | Fixed | `routing.rs` — unverified beacons touch no state |
 | **H05** | Fixed | `ActionDispatcher.kt`, `RadioController.kt`, `RadioControllerImpl.kt` |
+| **M01** | Documented | `engine.rs` — wraparound recorded as an accepted limitation, with the reason and the boundary conditions |
 | **M02** | Fixed | `engine.rs` — exact frame length for signed *and* unsigned packets |
-| **M03** | Fixed | `action.rs` — action-count and payload-length caps; **also fixed a frame-desync bug** (see N2) |
+| **M03** | Fixed | `action.rs` — action-count and payload-length caps; **also fixed N2** |
 | **M04** | Fixed | `hkdf.rs` — `MAX_OUTPUT_LEN` enforced |
-| **M06** | Fixed | `RadioControllerImpl.kt` — `ConcurrentLinkedQueue` + `computeIfAbsent` + per-peer cap |
+| **M05** | Fixed | `action.rs` — advertisement payload is now exactly `AdvBeaconExt::SIZE` (24), not 31 |
+| **M06** | Fixed | `RadioControllerImpl.kt` (queue race + bound) **and** `routing.rs` (`MAX_TRACKED_ORIGINATORS`) |
 | **M07** | Fixed | `BleFragmenter.kt`, `BlePacketSender.kt` — shared size ceiling |
 | **M08** | Fixed | `AndroidManifest.xml`, `MainActivity.kt`, `RadioControllerImpl.kt` |
 | **M09** | Fixed | `MeshServiceConnection.kt` — bounded, O(1) window |
@@ -32,9 +35,93 @@
 | **L03** | Fixed | `AppDatabase.kt` — wipe only on wrong-key evidence; rename not delete |
 | **L04** | Fixed | `data_extraction_rules.xml`, `backup_rules.xml` |
 | **L05** | Fixed | `RezvanApplication.kt` — crash dossier moved out of Downloads |
+| **L07** | Fixed | `ContactsRepository.kt` — plaintext `contacts.txt` replaced by the existing (unused) `ContactDao`, with one-time import |
+| **L08** | Fixed | `DiagLogger.kt` — full UUID session id |
+| **L09** | Fixed | `session.rs` — full annotated key-bundle layout |
 
-**Not remediated:** H01 (partially addressed by C01), M01, M05, M06's routing-side
-half (`relayed_seen` bounds), L01 (documented tradeoff), L07, L08, L09, L10.
+**Not remediated:** L01 (documented tradeoff — intentional), L10
+(`sodiumoxide` migration, already tracked in `rust/SODIUMOXIDE_MIGRATION.md`).
+
+### H01 and L07 in detail
+
+Both were the same underlying mistake: a store that was implemented, correct,
+and *unused*, next to a second store that was used and wrong.
+
+**H01 — channel keys.** The 32-byte sender key lived only in the native
+engine's in-memory map, so `channels.isJoined = 1` and "can decrypt this channel"
+were two independent facts that could disagree — most visibly after a restart,
+where the row survived and the key did not, leaving a channel that appeared in
+the UI and was silently dead. The key is now a column on `channels`
+(migration 2→3, nullable with no backfill: inventing a key would be worse than
+none, because it fails as "messages are encrypted wrong" rather than "you are
+not a member"). Leaving a channel now revokes the key rather than retaining it,
+and `RezvanRadioService` re-installs every persisted key on start so the
+database is authoritative and cannot drift from the engine's in-memory copy.
+
+**L07 — contacts.** `ContactEntity`/`ContactDao` modelled everything
+(including `trustLevel` and `lastSeen`) and had **zero callers**; the live code
+used a pipe-delimited plaintext `contacts.txt` sitting unencrypted next to the
+SQLCipher database. The repository now uses the DAO, and the plaintext file is
+imported once and deleted — leniently (a name containing `|` used to make the
+line unparseable and vanish) but strictly on NodeIds, which become primary keys
+that message routing later treats as destinations.
+
+### New findings discovered during remediation
+
+Found while fixing an adjacent defect, confirmed by reading the code, fixed in
+the same pass.
+
+| ID | Severity | Finding | Where |
+|----|----------|---------|-------|
+| **N1** | **High** | **Multi-hop OGM propagation was silently broken.** `last_seen_seq` was a single high-water mark shared by two independent senders' counters (`adv_sequence` for beacons, `ogm_sequence` for signed packets). Whichever ran ahead starved the other, so a peer's OGM carrying sequence 5 was rejected as "stale" right after its beacon carrying sequence 50 was accepted. Split into `last_beacon_seq` / `last_packet_seq`. | `routing.rs` |
+| **N2** | **High** | **`DiagLog` desynchronised every frame containing one.** The serializer wrote the message *length* but never the message *bytes*, so Kotlin's `offset += payloadLen` walk overshot and every action after a diagnostic in the same batch was dropped — including `NotifyUi`. Since `DiagLog` is emitted for every packet rejection, a rejected packet could swallow an adjacent valid message. | `action.rs` |
+| **N3** | Medium | `pendingPacketsByMac` used `getOrPut` (not atomic on `ConcurrentHashMap`) on a `MutableList` (not thread-safe); concurrent sends to one peer could discard each other's packets. | `RadioControllerImpl.kt` |
+| **N4** | Medium | `pendingPacketsByMac` was unbounded and unevicted for peers that never complete service discovery — a slow OOM at up to 64 KiB per queued packet. | `RadioControllerImpl.kt` |
+| **N5** | Medium | `MeshServiceConnection._receivedMessages` retained the full plaintext of every message the process ever decrypted, had no consumers, and copied the whole list per arrival (quadratic). | `MeshServiceConnection.kt` |
+| **N6** | Medium | `FileStorageManager.readFile`/`deleteFile` took an arbitrary absolute path with no validation — a general-purpose "read/delete any file the app can" primitive. | `FileStorageManager.kt` |
+| **N7** | Medium | `AppDatabase.openOrRecreate` caught bare `Exception` and deleted the database unconditionally, so any unrelated bug on the open path destroyed all message history. | `AppDatabase.kt` |
+| **N8** | Medium | Crash dossiers (device fingerprint, git SHA, stack trace, 200 diag lines with peer NodeIds and MAC fragments) were written to `MediaStore.Downloads` — user-visible, media-scanner-indexed, world-readable on older releases. | `RezvanApplication.kt` |
+| **N9** | Medium | `ContactsRepository` was instantiated once per consumer, each with an un-cancellable `SupervisorJob`, and each racing to import the same legacy file. | `ContactsRepository.kt` |
+
+### Verification
+
+Verified by GitHub CI (per project instruction — no local builds or tests).
+
+Phases 1 and 2 went through CI. Phase 1 required several follow-up commits to
+fix Kotlin compile errors in the new tests, which confirms the Android side is
+genuinely compiled and unit-tested in CI and that "it builds" is a real signal.
+
+**Phase 3 has not been through CI.** Structure was verified by inspection:
+brace balance on all changed Rust files, and a symbol cross-check confirming
+every `channelDao.*` / `contactDao.*` call resolves to a declared method, every
+newly referenced type/constant exists, and the Room migration chain is
+complete (`1→2`, `2→3`, both registered, `version = 3`).
+
+New tests added across all phases: 4 (JNI registry/concurrency), 8
+(persistence), 8 (action frame integrity incl. advertisement size), 5 (HKDF
+bounds), 4 (routing replay/sequence-space/cardinality), 9 (`ChannelQrCodec`), 12
+(`ChannelPasswordHasher`), 9 (`JoinThrottle`), 7 (`ActionDispatcher`), 5
+(fragmenter bounds), 10 (`ChannelEntity` equality).
+
+### Known gaps
+
+- **Phase 3 has not been through CI yet.** The likeliest failures, in order:
+  - `ChannelEntity` — a data class with hand-written `equals`/`hashCode`;
+    legal, but Room's codegen and the custom methods should be confirmed
+    together.
+  - `RezvanRadioService.initMeshEngine` became `suspend`; it is only called from
+    `serviceScope.launch`, so this should hold, but it is the kind of change
+    that cascades if a second caller appears.
+  - `ContactsRepository` — rewired from file I/O to Room, and it activates
+    `ContactDao`, which had no callers and therefore has never been exercised
+    against a real database.
+- The transport and persistence paths (C01, C05, C06) have not been exercised on
+  a device. `nativeSaveState` and restore need a two-session manual test.
+- The H01 migration is exercised only on install-over-existing-DB. A fresh
+  install skips migrations entirely, so both paths need testing.
+- `cargo fmt --check` still reports 138 pre-existing diffs repo-wide; new Rust
+  files are formatted, pre-existing ones left alone. CI treats this as
+  non-blocking.
 
 ### New findings discovered during remediation
 
@@ -259,24 +346,24 @@ RezvanMesh is an offline mesh messaging app with a **Kotlin/Android** frontend a
 
 ## Next Steps (Build Mode)
 
-**Done:** C01–C06, H02–H05, M02–M04, M06–M10, L02–L05 (22 original findings),
-plus 8 new findings found and fixed during the work.
+**Done:** C01–C06, H01–H05, M01–M10, L02–L05, L07–L09 — 30 of 31 findings,
+plus 9 new findings found and fixed during the work.
 
-### Remaining, in rough priority order
+### Remaining
 
-1. **Push this batch to CI.** Phase 2 is written but unverified; CI is the
+1. **Push this batch to CI.** Phase 3 is written but unverified; CI is the
    reviewer.
-2. **H01** — Channel keys now survive restarts (C01), but the key and its
-   metadata still live in two unrelated stores. Consolidating the key into the
-   `channels` table would make "joined" and "can decrypt" the same fact instead
-   of two that can disagree.
-3. **L07** — `ContactsRepository` writes a plaintext `contacts.txt`. Move to Room
-   (already encrypted) and delete the file.
-4. **M05** — Align the BLE advertisement action to 24 bytes so it stops being
-   padded to 31 and truncated on every transmit.
-5. **M01 / L09** — Sequence-wrap and stale-doc items, both acceptable as-is.
-   Document the wraparound rather than adding wrap-aware comparison.
-6. **L10** — `sodiumoxide` → `libsodium-sys` migration, already tracked in
-   `rust/SODIUMOXIDE_MIGRATION.md`.
-7. **L08** — Collapse the 8-char `DiagLogger` session id to a full UUID; the
-   collision risk is negligible but the fix is trivial.
+2. **L10 — `sodiumoxide` → `libsodium-sys`.** The last open finding. Already
+   scoped in `rust/SODIUMOXIDE_MIGRATION.md`; it is a dependency swap with no
+   behavioural change intended, so it wants its own commit and its own
+   verification rather than being folded into anything else.
+3. **L01 — epoch key blast radius.** Documented and accepted: any mesh member
+   that holds the shared beacon epoch key can forge beacons appearing to come
+   from any other member. Worth revisiting only if the threat model changes
+   (e.g. a deployment where mutual distrust between members is expected).
+4. **Device-level verification** for the paths CI cannot reach: BLE/Wi-Fi
+   transport, `nativeSaveState` across a restart, the H01 Room migration
+   install-over-existing-DB path, and a fresh install (which skips migrations).
+5. **CI hardening** — `cargo fmt` and `clippy` are both non-blocking and both
+   currently failing on pre-existing code (138 fmt diffs, 3 clippy errors). A
+   dedicated "format the codebase" commit would let them become blocking.

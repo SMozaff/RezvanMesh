@@ -45,8 +45,38 @@ interface ChannelDao {
     @Query("UPDATE channels SET isJoined = 1 WHERE channelId = :channelId")
     suspend fun markAsJoined(channelId: Int)
 
+    /**
+     * Store the shared sender key and mark the channel joined, atomically.
+     *
+     * Both in one statement so there is no window in which `isJoined` is true
+     * but the key is missing -- which is the exact state that made joined
+     * channels silently dead across a restart.
+     */
+    @Query("UPDATE channels SET isJoined = 1, senderKey = :senderKey WHERE channelId = :channelId")
+    suspend fun markAsJoinedWithKey(channelId: Int, senderKey: ByteArray)
+
+    @Query("SELECT * FROM channels WHERE senderKey IS NOT NULL")
+    suspend fun getChannelsWithKeys(): List<ChannelEntity>
+
+    @Query("SELECT senderKey FROM channels WHERE channelId = :channelId")
+    suspend fun getSenderKey(channelId: Int): ByteArray?
+
     @Query("UPDATE channels SET isJoined = 0 WHERE channelId = :channelId")
     suspend fun markAsLeft(channelId: Int)
+
+    /**
+     * Leave a channel and revoke the shared sender key, in one statement.
+     *
+     * Clearing the key is the point, not a side effect. If it stayed, we would
+     * retain the ability to decrypt every future broadcast for a channel we
+     * claimed to have left, and the native engine still holds the key in memory
+     * for the process lifetime.
+     *
+     * Old messages stay readable: they were decrypted on arrival and are stored
+     * in `messages`, so the key is not needed for history.
+     */
+    @Query("UPDATE channels SET isJoined = 0, senderKey = NULL WHERE channelId = :channelId")
+    suspend fun markAsLeftAndRevokeKey(channelId: Int)
 
     @Query("UPDATE channels SET memberCount = :count WHERE channelId = :channelId")
     suspend fun updateMemberCount(channelId: Int, count: Int)

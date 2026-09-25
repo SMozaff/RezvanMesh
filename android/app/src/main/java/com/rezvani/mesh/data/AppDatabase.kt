@@ -25,7 +25,7 @@ import java.io.File
         ContactEntity::class,
         ChannelEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -53,6 +53,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the per-channel sender key to `channels`.
+         *
+         * The shared sender key previously existed only in the native engine's
+         * in-memory map, so a joined channel's row outlived its ability to send
+         * or receive: after a restart the channel still appeared in the UI and
+         * was silently dead. Storing the key beside the membership flag makes
+         * "joined" and "can decrypt" the same fact, and lets the service
+         * re-install keys into the engine on start.
+         *
+         * Nullable with no backfill, deliberately. Existing rows describe
+         * channels the user has not been given a key for, and inventing one
+         * would produce a key that disagrees with every other member's -- the
+         * worst possible value, since it fails as "messages are encrypted
+         * wrong" rather than "you are not a member". A null key is the honest
+         * state and the join-with-key flow fills it in.
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE channels ADD COLUMN senderKey BLOB")
+            }
+        }
+
+        private val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
         /**
          * Gets the database instance.
          *
@@ -215,7 +239,7 @@ abstract class AppDatabase : RoomDatabase() {
                 DATABASE_NAME
             )
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(*ALL_MIGRATIONS)
                 .build()
         }
 

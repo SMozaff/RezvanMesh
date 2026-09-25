@@ -49,15 +49,31 @@ impl MeshEngine {
 
     pub fn tick(&mut self) -> Vec<Action> {
         let mut actions = Vec::new();
-        // NOTE (this review's finding #5, very low severity, not fixed):
-        // wrapping_add means adv_sequence eventually wraps back to 0 after
-        // ~4 billion beacons, which peers would see as "replayed" and reject
-        // until this node's routing entry ages out via purge_stale. Only
-        // matters after extremely long continuous uptime, and the ticks-
-        // based purge already bounds the resulting damage to "this node
-        // temporarily stops being routed through until its entry is purged
-        // and re-discovered," not a security issue -- not worth the added
-        // complexity of a wraparound-aware sequence scheme for that outcome.
+        // Sequence wraparound: ACCEPTED LIMITATION, deliberately not fixed.
+        //
+        // `adv_sequence` wraps to 0 after 2^32 beacons. Peers compare with a
+        // plain "is this strictly greater than the last one?" check
+        // (`RoutingTable::process_beacon` / `process_ogm`), which is not
+        // wrap-aware, so immediately after wrapping, every new beacon from
+        // this node looks like a replay and is discarded.
+        //
+        // Why accept it:
+        //   * At one advertise cycle per second this is ~136 years of
+        //     uninterrupted uptime. Power-managed nodes restart long before.
+        //   * The damage is self-healing and bounded. A peer's route entry
+        //     expires after `STALE_ROUTE_MAX_AGE_TICKS` of silence, which drops
+        //     the stale high-water mark, and the next beacon is accepted and
+        //     re-learns the route. So the observable effect is a short window
+        //     where this node is not routable, not a permanent partition.
+        //   * A wrap-aware comparison (RFC 1982 style serial-number arithmetic)
+        //     is subtle, and subtle arithmetic in a security-relevant check is
+        //     its own bug source. It would need a test that actually exercises
+        //     the boundary, not just the arithmetic.
+        //
+        // If this ever needs fixing, the change is confined to the two
+        // comparison sites in `routing.rs` plus this comment; do not "fix" it
+        // by resetting the sequence to 0 on wrap, which would make every
+        // node look like it restarted and re-open the replay window.
         self.adv_sequence = self.adv_sequence.wrapping_add(1);
         self.routing.advance_tick();
 

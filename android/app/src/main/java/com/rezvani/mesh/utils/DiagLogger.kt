@@ -32,7 +32,12 @@ object DiagLogger {
         }
     }
 
-    private val sessionId = UUID.randomUUID().toString().take(8)
+    // Full UUID rather than an 8-character prefix. The prefix was a deliberate
+    // width trade-off for reading logs, but it reduces the space to 32^8 (~1.1e12)
+    // and the id is the thing that ties entries from one process run together
+    // across several diag files, so a collision silently merges two sessions'
+    // logs. A UUID makes that impossible, and log files are machine-read anyway.
+    private val sessionId = UUID.randomUUID().toString()
     private var appContext: Context? = null
 
     private val _entries = MutableStateFlow<List<DiagEntry>>(emptyList())

@@ -139,7 +139,13 @@ class RezvanRadioService : Service() {
         }
     }
 
-    private fun initMeshEngine(seed: ByteArray) {
+    /**
+     * Initialise the native engine and then restore channel membership.
+     *
+     * Suspend because [restoreChannelKeys] awaits the database. Called from
+     * [loadIdentityAndInitEngine]'s coroutine, so this adds no scheduling cost.
+     */
+    private suspend fun initMeshEngine(seed: ByteArray) {
         if (enginePtr != 0L) return
         try {
             val initializedPtr = com.rezvani.mesh.MeshCore.tryNativeInit(seed, filesDir.absolutePath)
@@ -173,8 +179,54 @@ class RezvanRadioService : Service() {
             getSharedPreferences("rezvan_settings", Context.MODE_PRIVATE)
                 .registerOnSharedPreferenceChangeListener(prefsListener)
             applyPowerOverride()
+
+            // Channel keys are restored last: it is the only part of start-up
+            // that needs the database, and doing it after the engine is live
+            // means the radio is already usable if it fails.
+            restoreChannelKeys()
         } catch (e: Exception) {
             DiagLogger.err("SERVICE", "Engine init failed: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Re-install every persisted channel sender key into the engine.
+     *
+     * The database is authoritative for channel membership. The engine keeps its
+     * own copy in memory for the process lifetime and also persists it in the
+     * encrypted engine-state file, so a key is usually already present by the
+     * time we get here. Re-installing anyway means the two cannot drift: the
+     * newest database value wins, so a channel the user just left (key
+     * revoked) or joined is reflected even if the engine-state file is older
+     * than the database write.
+     *
+     * Runs on a coroutine, so the DAO can be awaited directly. Failures are
+     * logged and swallowed -- a database problem must not stop the radio from
+     * starting, since BLE and direct messages do not depend on any of this.
+     */
+    private suspend fun restoreChannelKeys() {
+        val ptr = enginePtr
+        if (ptr == 0L) return
+        try {
+            val ctx = applicationContext
+            val passphrase = com.rezvani.mesh.data.DbKeyProvider.getOrCreateKey(ctx)
+            val repo = com.rezvani.mesh.data.repositories.ChannelRepository(ctx, passphrase)
+            val keyed = repo.getChannelsWithKeys()
+            if (keyed.isEmpty()) {
+                DiagLogger.ble("No persisted channel keys to restore")
+                return
+            }
+            var installed = 0
+            for ((channelId, key) in keyed) {
+                if (com.rezvani.mesh.MeshCore.nativeSetChannelKey(ptr, channelId, key)) {
+                    installed++
+                } else {
+                    DiagLogger.err("SERVICE", "Could not install sender key for channel $channelId")
+                }
+            }
+            DiagLogger.ble("Restored $installed/${keyed.size} channel sender key(s)")
+        } catch (e: Exception) {
+            DiagLogger.err("SERVICE", "Channel key restore failed: ${e.message}", e)
         }
     }
 

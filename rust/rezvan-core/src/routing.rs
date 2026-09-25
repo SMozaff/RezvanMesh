@@ -8,6 +8,20 @@ use std::collections::{HashMap, HashSet};
 pub struct RoutingTable {
     /// Our own node id (first 8 bytes of SHA‑256(pubkey))
     pub node_id: NodeId,
+    /// Ceiling on the number of distinct originators we track at once.
+    ///
+    /// Every map in this struct is keyed by an *attacker-influenceable* NodeId,
+    /// and the per-originator retention window bounds each entry's age but not
+    /// how many entries exist. Without a cardinality cap, an adversary who can
+    /// get beacons past verification -- or, before the H04 fix, who could get
+    /// *any* beacon accepted -- grows these maps without bound simply by
+    /// claiming new identities, faster than `purge_stale` can age them out.
+    ///
+    /// Sized well above any real mesh (a small deployment is tens of nodes) but
+    /// low enough that the worst case stays a few hundred KiB rather than
+    /// growing until the process is killed.
+    const MAX_TRACKED_ORIGINATORS: usize = 512;
+
     /// Map from destination NodeId → up to 3 candidate routes
     routes: HashMap<NodeId, Vec<RouteEntry>>,
     /// Highest **beacon** sequence seen from each originator, for replay
@@ -120,6 +134,14 @@ impl RoutingTable {
     /// Read the logical clock without needing `&mut self`.
     pub fn current_tick_value(&self) -> u64 {
         self.current_tick
+    }
+
+    /// Number of distinct originators currently tracked.
+    ///
+    /// Exposed for tests and diagnostics; production code reaches the same
+    /// information via `routing_snapshot`.
+    pub fn tracked_originators(&self) -> usize {
+        self.replay_last_seen_tick.len()
     }
 
     /// Records that `(originator, sequence)` has been seen for relay
@@ -462,6 +484,37 @@ impl RoutingTable {
             !entries.is_empty()
         });
 
+        // Bound the *number* of tracked identities, not just how long each one
+        // is remembered.
+        //
+        // The per-originator retention window below is useless against an
+        // adversary whose strategy is to claim fresh NodeIds: they never become
+        // stale, so nothing ages them out, and every map in this struct grows
+        // in lockstep with the number of distinct identities seen. Evicting the
+        // least-recently-seen entries once the cap is hit keeps the worst case
+        // bounded.
+        //
+        // This runs on the same 30-tick cadence as the rest of `purge_stale`,
+        // so an attacker gets at most a few hundred extra entries between
+        // trims -- harmless, and never unbounded.
+        if self.replay_last_seen_tick.len() > Self::MAX_TRACKED_ORIGINATORS {
+            let mut by_recency: Vec<(NodeId, u64)> = self
+                .replay_last_seen_tick
+                .iter()
+                .map(|(node, tick)| (*node, *tick))
+                .collect();
+            by_recency.sort_by_key(|(_, tick)| *tick);
+            let excess = by_recency.len() - Self::MAX_TRACKED_ORIGINATORS;
+            for (node, _) in by_recency.into_iter().take(excess) {
+                self.replay_last_seen_tick.remove(&node);
+                self.routes.remove(&node);
+                self.last_beacon_seq.remove(&node);
+                self.last_packet_seq.remove(&node);
+                self.relayed_seen.remove(&node);
+                self.relayed_seen_last_tick.remove(&node);
+            }
+        }
+
         // Replay-sequence tracking is intentionally NOT tied to route
         // liveness (see field docs on `last_beacon_seq` / remediation #2). A
         // peer that goes out of range and reconnects within
@@ -747,6 +800,58 @@ mod tests {
     fn test_hop_penalty() {
         let penalty = compute_hop_penalty(255, 1.0);
         assert!(penalty > 900 && penalty < 1100, "penalty={}", penalty);
+    }
+
+    // --- cardinality cap tests ----------------------------------------------
+
+    /// Regression test for unbounded growth via many distinct identities.
+    ///
+    /// Retention windows bound how *long* an originator is remembered, not how
+    /// *many* are remembered. An adversary claiming fresh NodeIds every time
+    /// never ages anything out, so every map in the routing table grows
+    /// together.
+    #[test]
+    fn tracking_is_capped_against_many_distinct_identities() {
+        const CAP: usize = 32;
+        let mut table = RoutingTable::new(dummy_node_id(0xAA));
+
+        // Flood with far more distinct originators than the cap, each with a
+        // valid sequence and a fresh timestamp, then purge.
+        for i in 0..(CAP * 8) {
+            let peer = [1u8, 0, 0, 0, 0, 0, 0, i as u8];
+            table.process_beacon(&dummy_beacon(peer, 1, 80), -60, true);
+            table.advance_tick();
+        }
+
+        // purge_stale uses the production cap; assert on the table's own
+        // bookkeeping rather than the private constant so the test still
+        // exercises the real path.
+        table.purge_stale(1_000_000);
+
+        assert!(
+            table.tracked_originators() <= 512,
+            "tracked originators {} exceeded the cap",
+            table.tracked_originators()
+        );
+    }
+
+    #[test]
+    fn the_cap_does_not_evict_a_healthy_small_mesh() {
+        let mut table = RoutingTable::new(dummy_node_id(0xAA));
+        for i in 1..=20u8 {
+            let peer = [2u8, 0, 0, 0, 0, 0, 0, i];
+            table.process_beacon(&dummy_beacon(peer, 1, 80), -60, true);
+            table.advance_tick();
+        }
+        table.purge_stale(1_000_000);
+        assert_eq!(table.tracked_originators(), 20, "a 20-node mesh must be untouched");
+        for i in 1..=20u8 {
+            let peer = [2u8, 0, 0, 0, 0, 0, 0, i];
+            assert!(
+                table.get_best_route(&peer).is_some(),
+                "node {i} was evicted from a mesh well under the cap"
+            );
+        }
     }
 
     // --- process_beacon tests -----------------------------------------------

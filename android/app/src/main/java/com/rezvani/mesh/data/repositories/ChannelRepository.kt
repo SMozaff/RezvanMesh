@@ -38,6 +38,17 @@ class ChannelRepository(context: Context, passphrase: ByteArray) {
      */
     private val joinThrottle = JoinThrottle()
 
+    private companion object {
+        /**
+         * Length of a channel sender key.
+         *
+         * Fixed by `rezvan_crypto::sender_key` and enforced again in the JNI
+         * layer; asserted here so a bad key is rejected at the storage boundary
+         * rather than being silently persisted and then failing to install.
+         */
+        const val SENDER_KEY_BYTES = 32
+    }
+
 
     /**
      * Flow of all known channels.
@@ -201,14 +212,41 @@ class ChannelRepository(context: Context, passphrase: ByteArray) {
     }
 
     /**
-     * Leaves a channel.
+     * Leaves a channel and revokes the shared sender key.
+     *
+     * Dropping the key is what "leave" has to mean. Keeping it would leave us
+     * able to decrypt every future broadcast for a channel we claim to have
+     * left, and the native engine holds its copy in memory for the process
+     * lifetime regardless of what the database says. Old messages remain
+     * readable because they were decrypted on arrival and are stored in
+     * `messages`.
      */
     suspend fun leaveChannel(channelId: Int) {
-        channelDao.markAsLeft(channelId)
+        channelDao.markAsLeftAndRevokeKey(channelId)
         channelDao.getChannelById(channelId)?.let { channel ->
             channelDao.updateMemberCount(channelId, maxOf(0, channel.memberCount - 1))
         }
     }
+
+    /**
+     * Record a channel we created, together with its freshly generated key.
+     *
+     * Called immediately after the native engine mints the key. If this write
+     * fails the channel row exists with a null key, which the service's
+     * start-up restore treats as "not a member" -- a safe failure, because
+     * every other member has a different key and messages would be
+     * undecryptable either way.
+     */
+    suspend fun recordChannelKey(channelId: Int, key: ByteArray) {
+        require(key.size == SENDER_KEY_BYTES) { "sender key must be $SENDER_KEY_BYTES bytes" }
+        channelDao.markAsJoinedWithKey(channelId, key.copyOf())
+    }
+
+    /** Every channel we hold a sender key for, for re-installation into the engine. */
+    suspend fun getChannelsWithKeys(): List<Pair<Int, ByteArray>> =
+        channelDao.getChannelsWithKeys().mapNotNull { entity ->
+            entity.senderKey?.let { entity.channelId to it }
+        }
 
     /**
      * Updates channel member count.

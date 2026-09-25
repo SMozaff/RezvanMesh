@@ -101,6 +101,11 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
             // only wrote local metadata and no crypto material existed at all.
             val key = com.rezvani.mesh.MeshServiceConnection.activeService?.createChannelKey(channelId)
             if (key != null) {
+                // Persist the key alongside the membership flag. Without this the
+                // channel only works until the service restarts, because the
+                // native engine's copy is in-memory (and, before the engine
+                // state file existed, was gone after any restart at all).
+                channelRepo.recordChannelKey(channelId, key)
                 _lastCreatedChannelKey.value = channelId to key
             } else {
                 // The channel exists in metadata but has no key, so it cannot
@@ -136,7 +141,10 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
         onError: (String) -> Unit
     ) {
         viewModelScope.launch {
-            if (key.isEmpty()) {
+            if (key.size != SENDER_KEY_BYTES) {
+                // A wrong-length key would be rejected by the JNI layer anyway;
+                // catching it here turns a silent "could not be accepted" into
+                // an accurate complaint about the invite.
                 onError("The channel invite did not contain a valid key.")
                 return@launch
             }
@@ -149,7 +157,10 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
 
             try {
                 if (service.setChannelKey(channelId, key)) {
-                    channelRepo.joinChannel(channelId)
+                    // Persist before reporting success. If this write throws,
+                    // the engine holds a key we cannot recover after a restart,
+                    // so the user is better off being told the join failed.
+                    channelRepo.recordChannelKey(channelId, key)
                     onSuccess()
                 } else {
                     onError("The channel invite could not be accepted. Verify the invite and try again.")
@@ -171,5 +182,9 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             channelRepo.joinChannel(channelId)
         }
+    }
+
+    private companion object {
+        const val SENDER_KEY_BYTES = 32
     }
 }
