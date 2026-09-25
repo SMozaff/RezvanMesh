@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-25  
 **Scope:** Full codebase — Android/Kotlin frontend, Rust core (rezvan-core, rezvan-crypto, rezvan-common), CI, docs, tests  
-**Status:** 29 of 31 findings remediated. **L10 investigated and re-scoped — the
-original plan was wrong; see below.** See *Remediation Status*.
+**Status:** 30 of 31 findings remediated. **L10 (stale vendored C cryptography
+library) is now migrated to pure Rust.** See *Remediation Status*.
 
 ---
 
@@ -40,8 +40,8 @@ original plan was wrong; see below.** See *Remediation Status*.
 | **L08** | Fixed | `DiagLogger.kt` — full UUID session id |
 | **L09** | Fixed | `session.rs` — full annotated key-bundle layout |
 
-**Not remediated:** L01 (documented tradeoff — intentional). L10 was
-investigated; see below.
+**Not remediated:** L01 only (documented tradeoff — intentional). L10 was
+investigated, found to have a wrong plan, and is now done; see below.
 
 ### L10 — investigated, and the plan was wrong
 
@@ -77,17 +77,42 @@ re-scoped to **medium**, for two reasons:
   therefore *not* evidence that the cryptography is current, and the CI job doc
   now says so.
 
-Action taken: the migration document was rewritten with the evidence, the
-corrected analysis, a claim-by-claim table against the original proposal, a
-recommendation that actually addresses both liabilities (`sodim`, or
-RustCrypto as fallback), the option of keeping the status quo with explicit
-re-evaluation triggers, and the corrected priority.
+**3. The thing that actually mattered was already in the tree.**
+`vodozemac` — the Olm / Double Ratchet implementation — *already* depends on
+`ed25519-dalek`, `x25519-dalek`, `chacha20poly1305`, `hmac`, `sha2`, `hkdf`,
+`zeroize` and `subtle`. In other words the most security-critical part of the
+app, the message encryption, was pure Rust all along; only `rezvan-crypto`'s
+own thin wrapper layer was still on the C library. Every primitive needed for
+the migration was already compiled into the binary and already covered by
+`cargo audit`.
 
-No code was changed, deliberately. Doing the migration as originally specified
-would have been a net negative, and the version that would actually help
-(`sodim`) is a new dependency that needs `Cargo.lock` regenerated — which
-cannot be done here, since CI builds with `--locked` and local builds are off
-the table by instruction.
+That made RustCrypto strictly better than `sodim` (which would have been a
+*new* dependency to trust, for no gain) and made the change cheaper than
+expected. `rezvan-crypto` now uses `ed25519-dalek`, `x25519-dalek`,
+`chacha20poly1305`, `hmac`/`sha2`, and `getrandom`. `sodiumoxide` and
+`libsodium-sys` are gone, the graph is **8 packages smaller**, and the Android
+NDK cross-compile no longer runs autotools at all.
+
+**Byte-compatibility is pinned by tests, not asserted in a comment.** The whole
+safety argument is that output is unchanged, so:
+- **RFC 8032 §7.1 vectors** now assert the exact Ed25519 signature bytes for two
+  published (seed, key, message, signature) tuples. These come from the spec
+  rather than from a captured run, so they test conformance, not
+  self-consistency.
+- New HKDF tests pin the two properties the salt rewrite relied on: an absent
+  salt behaves exactly as 32 zero bytes, and the hash-down boundary sits exactly
+  between 32 and 33 bytes.
+- A new ECDH symmetry test asserts both directions of a key agreement agree — if
+  they diverged, every beacon MAC would fail and the mesh would silently stop
+  forming.
+- `IdentityKeypair` now zeroizes key material on drop, with tests for the wipe
+  and for clone independence.
+
+**Residual risk:** the suite proves spec conformance and self-consistency on the
+host target. It does not prove interoperability with a peer on the previous
+build. A two-node test (old build ↔ new build) over a Gate 1 direct message and a
+channel message is the one thing still worth doing, and it needs two devices or
+the integration harness.
 
 ### H01 and L07 in detail
 

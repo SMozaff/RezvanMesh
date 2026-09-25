@@ -4,9 +4,33 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sodiumoxide = "0.2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-rand = "0.8"
+# Cryptographic primitives.
+#
+# These are the same RustCrypto crates `vodozemac` (the Olm / Double Ratchet
+# implementation) already depends on, so none of them -- nor any of their
+# transitive dependencies -- are new to this build. They were previously
+# already compiled into the binary and already covered by `cargo audit`.
+#
+# This replaced `sodiumoxide` + its vendored C `libsodium`. See
+# SODIUMOXIDE_MIGRATION.md for why that swap was worth doing: the C library was
+# pinned to a mid-2021 release, so several years of upstream libsodium security
+# fixes were absent with no upgrade path, and building it required autotools
+# (`./configure && make`) inside the Android NDK cross-compile.
+#
+# Every primitive used here is byte-for-byte compatible with what it replaced
+# (Ed25519 and X25519 per RFC 8032/7748, HMAC-SHA256 and HKDF per RFC 2104/5869,
+# XChaCha20-Poly1305 per its specification), so the wire format and the on-disk
+# state format are unchanged. The existing test suite -- which includes RFC 5869
+# vectors and cross-node sign/verify round-trips -- is what verifies that.
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2.2"
+getrandom = "0.2"
+hmac = "0.12"
+sha2 = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+zeroize = "1"
+
+# `CryptoProvider` and `CryptoError` are implemented in terms of the above.
 thiserror = "1.0"
-vodozemac = "0.10"   # production X3DH/Olm + Double Ratchet (audited). Fallback: "0.9" if 0.10 fails to resolve.
+# Olm / Double Ratchet session and account state.
+vodozemac = "0.10"

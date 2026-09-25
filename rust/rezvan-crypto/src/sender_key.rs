@@ -35,7 +35,8 @@
 //! actively tells a reader "this is unreachable" is worse than no comment when
 //! it is wrong, since it invites someone to "clean up" the live path.
 
-use sodiumoxide::crypto::aead::xchacha20poly1305_ietf;
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{Key as AeadKey, XChaCha20Poly1305, XNonce};
 use crate::identity::IdentityKeypair;
 use crate::sign;
 
@@ -45,8 +46,10 @@ use crate::sign;
 /// analogue) -- distribution mechanism is out of scope for this module.
 pub fn generate() -> [u8; 32] {
     let mut key = [0u8; 32];
-    let random_bytes = sodiumoxide::randombytes::randombytes(32);
-    key.copy_from_slice(&random_bytes);
+    // Panics only if the OS entropy source is unavailable, which is not a
+    // condition a mesh node can meaningfully continue through -- generating a
+    // predictable channel key would be far worse than not starting.
+    getrandom::getrandom(&mut key).expect("OS randomness unavailable");
     key
 }
 
@@ -66,12 +69,22 @@ pub fn generate() -> [u8; 32] {
 /// KeyAnnouncement), never trust the embedded key blindly, or this
 /// degenerates into "anyone can claim to be anyone."
 pub fn encrypt(key: &[u8; 32], plaintext: &[u8], sender_identity: &IdentityKeypair) -> Vec<u8> {
-    let nonce = xchacha20poly1305_ietf::gen_nonce();
-    let aead_key = xchacha20poly1305_ietf::Key(*key);
-    let ciphertext = xchacha20poly1305_ietf::seal(plaintext, None, &nonce, &aead_key);
+    // A 24-byte random nonce per message: XChaCha20's nonce is large enough
+    // that random generation is safe, and the wire format has always carried
+    // 24 bytes, so this stays compatible with peers on the previous
+    // implementation.
+    let mut nonce_bytes = [0u8; 24];
+    getrandom::getrandom(&mut nonce_bytes).expect("OS randomness unavailable");
+    let nonce = XNonce::from_slice(&nonce_bytes);
+
+    let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(key));
+    // Encryption of an in-memory buffer with a random nonce cannot fail.
+    let ciphertext = cipher
+        .encrypt(nonce, Payload { msg: plaintext, aad: &[] })
+        .expect("XChaCha20-Poly1305 encryption of an in-memory buffer cannot fail");
 
     let mut signed_bytes = Vec::with_capacity(24 + ciphertext.len());
-    signed_bytes.extend_from_slice(&nonce.0);
+    signed_bytes.extend_from_slice(&nonce_bytes);
     signed_bytes.extend_from_slice(&ciphertext);
 
     let signature = sign::sign(sender_identity, &signed_bytes);
@@ -132,11 +145,18 @@ pub fn decrypt(
         return None;
     }
     let nonce_bytes: [u8; NONCE_LEN] = signed_bytes[0..NONCE_LEN].try_into().ok()?;
-    let nonce = xchacha20poly1305_ietf::Nonce(nonce_bytes);
     let encrypted = &signed_bytes[NONCE_LEN..];
-    let aead_key = xchacha20poly1305_ietf::Key(*key);
 
-    xchacha20poly1305_ietf::open(encrypted, None, &nonce, &aead_key).ok()
+    let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(key));
+    cipher
+        .decrypt(
+            XNonce::from_slice(&nonce_bytes),
+            Payload {
+                msg: encrypted,
+                aad: &[],
+            },
+        )
+        .ok()
 }
 
 #[cfg(test)]

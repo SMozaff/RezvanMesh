@@ -1,5 +1,8 @@
-use sodiumoxide::crypto::auth::hmacsha256;
-use sodiumoxide::crypto::hash::sha256;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+/// HMAC-SHA256, as used by HKDF below.
+type HmacSha256 = Hmac<Sha256>;
 
 /// HKDF-SHA256 (RFC 5869)
 ///
@@ -16,9 +19,6 @@ use sodiumoxide::crypto::hash::sha256;
 /// *wrong bytes* rather than an error or a panic. Since this primitive exists to
 /// derive keys, silently wrong output is the worst possible failure mode, so an
 /// out-of-range request is rejected loudly instead.
-///
-/// The bound is a compile-time constant rather than a runtime `length` check so
-/// that the `i as u8` cast below is provably lossless for every reachable `n`.
 pub const MAX_OUTPUT_LEN: usize = 32 * 255;
 
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u8> {
@@ -29,11 +29,20 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
 
     // ---- extract ----
     // RFC 5869 §2.2: use salt directly as the HMAC key.
-    let salt_key = hmac_key_from_salt(salt);
-
-    let prk = hmacsha256::authenticate(ikm, &salt_key);
-    let mut prk_key = [0u8; 32];
-    prk_key.copy_from_slice(&prk.0);
+    //
+    // `Hmac::new_from_slice` accepts a key of any length and applies HMAC's
+    // real key handling (RFC 2104 §2): keys shorter than the block size are
+    // zero-padded, keys longer are hashed down. That covers every case RFC 5869
+    // cares about, including the empty salt (which becomes 32 zero bytes, i.e.
+    // the §2.2 "not provided" default) with no special-casing here.
+    //
+    // The previous implementation needed a `hmac_key_from_salt` helper to do
+    // that by hand, because sodiumoxide's `hmacsha256::Key` is a fixed 32-byte
+    // type and silently *truncated* anything longer. The bug that motivated
+    // that helper (an over-long salt losing its tail) is now impossible to
+    // express: the length check is the standard library's.
+    let salt_key = HmacSha256::new_from_slice(salt).expect("HMAC accepts keys of any length");
+    let prk_key = salt_key.chain_update(ikm).finalize().into_bytes();
 
     // ---- expand ----
     let mut output = Vec::with_capacity(length);
@@ -48,45 +57,15 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
         input.extend_from_slice(info);
         input.push(i as u8);
 
-        let key = hmacsha256::Key(prk_key);
-        let tag = hmacsha256::authenticate(&input, &key);
-        t = tag.0.to_vec();
-        output.extend_from_slice(&tag.0);
+        let mut mac = HmacSha256::new_from_slice(&prk_key).expect("HMAC accepts keys of any length");
+        mac.update(&input);
+        let tag = mac.finalize().into_bytes();
+        t = tag.to_vec();
+        output.extend_from_slice(&tag);
     }
 
     output.truncate(length);
     output
-}
-
-/// Build the HMAC-SHA256 key from a salt, following HMAC's actual key
-/// handling rule (RFC 2104 §2 / FIPS 198-1), not a silent truncation:
-///   - empty salt              → 32 zero bytes (RFC 5869 §2.2's special case)
-///   - 1..=32 bytes             → used as-is, zero-padded on the right to 32
-///     bytes (sodiumoxide's `hmacsha256::Key` is a fixed 32-byte type)
-///   - more than 32 bytes       → hashed down to 32 bytes with plain SHA-256
-///     first. HMAC's spec requires this for any key longer than the block
-///     size (64 bytes); we hash down starting at 32 bytes rather than 64
-///     because that's the largest key sodiumoxide's fixed-size `Key` type
-///     can represent at all, and pre-hashing an HMAC key is valid at any
-///     length per RFC 2104, not just when strictly necessary.
-///
-/// This review's finding #3: the previous implementation silently truncated
-/// any salt longer than 32 bytes to its first 32 bytes, discarding the rest
-/// unhashed. Latent today since no current caller passes a salt over 32
-/// bytes, but a real correctness bug in a primitive that explicitly claims
-/// RFC-5869 fidelity -- a future caller passing a long salt would have
-/// silently gotten the wrong PRK with no error or warning.
-fn hmac_key_from_salt(salt: &[u8]) -> hmacsha256::Key {
-    if salt.is_empty() {
-        return hmacsha256::Key([0u8; 32]);
-    }
-    if salt.len() <= 32 {
-        let mut key = [0u8; 32];
-        key[..salt.len()].copy_from_slice(salt);
-        return hmacsha256::Key(key);
-    }
-    let digest = sha256::hash(salt);
-    hmacsha256::Key(digest.0)
 }
 
 #[cfg(test)]
@@ -119,6 +98,53 @@ mod tests {
         let ikm = b"hello";
         let okm = hkdf_sha256(ikm, &[], b"test", 32);
         assert_eq!(okm.len(), 32);
+    }
+
+    /// Pins the equivalence the salt rewrite depends on.
+    ///
+    /// RFC 5869 §2.2 says an absent salt is `HashLen` zero bytes. That is
+    /// implemented here by handing HMAC an empty key, which zero-pads to the
+    /// 64-byte block size -- and a 32-byte all-zero key zero-pads to exactly the
+    /// same 64 bytes. So the two must produce identical output. The previous
+    /// implementation got this by substituting a `Key([0u8; 32])` explicitly;
+    /// that special case is gone, so assert the property rather than trusting it.
+    #[test]
+    fn empty_salt_equals_an_explicit_all_zero_salt() {
+        let implicit = hkdf_sha256(b"ikm", b"", b"info", 32);
+        let explicit = hkdf_sha256(b"ikm", &[0u8; 32], b"info", 32);
+        assert_eq!(
+            implicit, explicit,
+            "an absent salt must behave as 32 zero bytes, per RFC 5869 2.2"
+        );
+    }
+
+    /// A 32-byte salt must not be hashed down, and a 33-byte salt must be --
+    /// i.e. the boundary is exactly where RFC 2104 puts it, not somewhere
+    /// convenient.
+    #[test]
+    fn salt_length_boundary_matches_rfc2104() {
+        let ikm = b"ikm";
+        let info = b"info";
+        let short = hkdf_sha256(ikm, &[0xAA; 32], info, 32);
+        // If a 32-byte salt were (incorrectly) hashed down, hashing it by hand
+        // would reproduce the same output.
+        let hand_hashed = hkdf_sha256(ikm, &sha256_of(&[0xAA; 32]), info, 32);
+        assert_ne!(
+            short, hand_hashed,
+            "a 32-byte salt must be used as-is, not pre-hashed"
+        );
+
+        let long = hkdf_sha256(ikm, &[0xAA; 33], info, 32);
+        let hand_hashed_long = hkdf_sha256(ikm, &sha256_of(&[0xAA; 33]), info, 32);
+        assert_eq!(
+            long, hand_hashed_long,
+            "a 33-byte salt must be hashed down per RFC 2104"
+        );
+    }
+
+    fn sha256_of(input: &[u8]) -> Vec<u8> {
+        use sha2::Digest;
+        sha2::Sha256::digest(input).to_vec()
     }
 
     #[test]

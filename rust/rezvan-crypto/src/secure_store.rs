@@ -17,10 +17,11 @@
 //! string so the state-encryption key can never collide with the beacon epoch
 //! ratchet, the Olm pickles, or any other derived key.
 
-use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{
-    gen_nonce, open as aead_open, seal as aead_seal, Key as AeadKey, Nonce as AeadNonce,
-    NONCEBYTES as AEAD_NONCEBYTES,
-};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{Key as AeadKey, XChaCha20Poly1305, XNonce};
+
+/// XChaCha20-Poly1305 nonce length, as carried in the on-disk format.
+const AEAD_NONCE_BYTES: usize = 24;
 
 /// Domain separator for the on-disk state encryption key. Changing this
 /// invalidates every previously written state file, so it must stay stable
@@ -43,10 +44,22 @@ pub fn derive_state_key(seed: &[u8; 32]) -> [u8; 32] {
 /// because the plaintext is state, not a secret that needs to be repeated
 /// identically.
 pub fn seal_state(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
-    let nonce = gen_nonce();
-    let ciphertext = aead_seal(plaintext, None, &nonce, &AeadKey(*key));
-    let mut out = Vec::with_capacity(AEAD_NONCEBYTES + ciphertext.len());
-    out.extend_from_slice(&nonce.0);
+    let mut nonce_bytes = [0u8; AEAD_NONCE_BYTES];
+    getrandom::getrandom(&mut nonce_bytes).expect("OS randomness unavailable");
+
+    let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(key));
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce_bytes),
+            Payload {
+                msg: plaintext,
+                aad: &[],
+            },
+        )
+        .expect("XChaCha20-Poly1305 encryption of an in-memory buffer cannot fail");
+
+    let mut out = Vec::with_capacity(AEAD_NONCE_BYTES + ciphertext.len());
+    out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
     out
 }
@@ -57,13 +70,20 @@ pub fn seal_state(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
 /// the AEAD tag check is what distinguishes "corrupt or hostile file" from
 /// "valid state we wrote earlier".
 pub fn open_state(key: &[u8; 32], sealed: &[u8]) -> Option<Vec<u8>> {
-    if sealed.len() < AEAD_NONCEBYTES {
+    if sealed.len() < AEAD_NONCE_BYTES {
         return None;
     }
-    let (nonce_bytes, ciphertext) = sealed.split_at(AEAD_NONCEBYTES);
-    let mut nonce = [0u8; AEAD_NONCEBYTES];
-    nonce.copy_from_slice(nonce_bytes);
-    aead_open(ciphertext, None, &AeadNonce(nonce), &AeadKey(*key)).ok()
+    let (nonce_bytes, ciphertext) = sealed.split_at(AEAD_NONCE_BYTES);
+    let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(key));
+    cipher
+        .decrypt(
+            XNonce::from_slice(nonce_bytes),
+            Payload {
+                msg: ciphertext,
+                aad: &[],
+            },
+        )
+        .ok()
 }
 
 #[cfg(test)]
@@ -107,7 +127,7 @@ mod tests {
         flipped[last] ^= 0x01;
         assert!(open_state(&key, &flipped).is_none());
 
-        assert!(open_state(&key, &sealed[..AEAD_NONCEBYTES]).is_none());
+        assert!(open_state(&key, &sealed[..AEAD_NONCE_BYTES]).is_none());
         assert!(open_state(&key, &[]).is_none());
     }
 

@@ -70,7 +70,9 @@ impl CryptoProvider for SodiumCryptoProvider {
         hkdf::hkdf_sha256(ikm, salt, info, len)
     }
     fn random_bytes(&self, len: usize) -> Vec<u8> {
-        sodiumoxide::randombytes::randombytes(len)
+        let mut out = vec![0u8; len];
+        getrandom::getrandom(&mut out).expect("OS randomness unavailable");
+        out
     }
     fn clone_box(&self) -> Box<dyn CryptoProvider> {
         Box::new(SodiumCryptoProvider)

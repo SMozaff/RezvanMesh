@@ -41,7 +41,10 @@
 //! from whatever key material it has.
 
 use crate::hkdf::hkdf_sha256;
-use sodiumoxide::crypto::auth::hmacsha256;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// How often (in seconds) a device should locally advance its epoch by one
 /// ratchet step. This is a LOCAL clock-driven schedule, not a coordinated
@@ -58,8 +61,10 @@ pub const EPOCH_MAC_LEN: usize = 7;
 /// mesh with no prior epoch key from any peer).
 pub fn generate_seed_key() -> [u8; 32] {
     let mut key = [0u8; 32];
-    let random_bytes = sodiumoxide::randombytes::randombytes(32);
-    key.copy_from_slice(&random_bytes);
+    // Panics only if the OS entropy source is unavailable. Falling back to
+    // anything weaker here would mean a guessable network-wide beacon key, so
+    // refusing to produce one is the correct failure.
+    getrandom::getrandom(&mut key).expect("OS randomness unavailable");
     key
 }
 
@@ -101,10 +106,11 @@ pub fn advance_to(key: &[u8; 32], current_epoch: u32, target_epoch: u32) -> Opti
 /// Compute the truncated tag over `message` (the beacon's signed_bytes())
 /// using the given epoch key.
 pub fn compute_tag(epoch_key: &[u8; 32], message: &[u8]) -> [u8; EPOCH_MAC_LEN] {
-    let key = hmacsha256::Key(*epoch_key);
-    let full_tag = hmacsha256::authenticate(message, &key);
+    let mut mac = HmacSha256::new_from_slice(epoch_key).expect("HMAC accepts keys of any length");
+    mac.update(message);
+    let full_tag = mac.finalize().into_bytes();
     let mut tag = [0u8; EPOCH_MAC_LEN];
-    tag.copy_from_slice(&full_tag.0[..EPOCH_MAC_LEN]);
+    tag.copy_from_slice(&full_tag[..EPOCH_MAC_LEN]);
     tag
 }
 

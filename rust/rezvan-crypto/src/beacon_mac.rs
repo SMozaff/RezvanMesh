@@ -49,8 +49,11 @@
 //!     `MeshPacketHeader`-based packets where there's room for a real one.
 
 use crate::hkdf::hkdf_sha256;
-use sodiumoxide::crypto::auth::hmacsha256;
-use sodiumoxide::crypto::scalarmult;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use x25519_dalek::{PublicKey, StaticSecret};
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub const BEACON_MAC_LEN: usize = 7;
 
@@ -62,15 +65,19 @@ pub const BEACON_MAC_LEN: usize = 7;
 /// derived key to "beacon-mac" so it can never collide with a key derived
 /// for a different purpose from the same ECDH secret.
 fn derive_shared_key(our_private_x25519: &[u8; 32], their_public_x25519: &[u8; 32]) -> [u8; 32] {
-    let scalar = scalarmult::Scalar(*our_private_x25519);
-    let point = scalarmult::GroupElement(*their_public_x25519);
-    // scalarmult can fail only on a small-order/degenerate input point;
-    // treat that as "no usable key" by falling back to an all-zero secret,
-    // which HKDF then turns into a key that will simply never match a
-    // legitimately-derived tag from the other side (fails closed).
-    let shared = scalarmult::scalarmult(&scalar, &point)
-        .map(|g| g.0)
-        .unwrap_or([0u8; 32]);
+    // Both libraries clamp the scalar internally per RFC 7748, so passing the
+    // already-clamped private key through unchanged reproduces the same shared
+    // secret the previous implementation produced.
+    let secret = StaticSecret::from(*our_private_x25519);
+    let their_public = PublicKey::from(*their_public_x25519);
+    let shared = secret.diffie_hellman(&their_public).to_bytes();
+
+    // A small-order ("degenerate") input point yields the identity as the
+    // Montgomery-ladder output, i.e. all zeros. That is the same
+    // "no usable key" result the previous `scalarmult(..).unwrap_or([0u8; 32])`
+    // fallback produced, and HKDF turns it into a key whose tag will never
+    // match anything a legitimate peer computes, so the forgery attempt fails
+    // closed either way.
 
     let okm = hkdf_sha256(&shared, &[], b"rezvan-beacon-mac-v1", 32);
     let mut key = [0u8; 32];
@@ -86,11 +93,12 @@ pub fn compute_tag(
     message: &[u8],
 ) -> [u8; BEACON_MAC_LEN] {
     let key_bytes = derive_shared_key(our_private_x25519, their_public_x25519);
-    let key = hmacsha256::Key(key_bytes);
-    let full_tag = hmacsha256::authenticate(message, &key);
+    let mut mac = HmacSha256::new_from_slice(&key_bytes).expect("HMAC accepts keys of any length");
+    mac.update(message);
+    let full_tag = mac.finalize().into_bytes();
 
     let mut tag = [0u8; BEACON_MAC_LEN];
-    tag.copy_from_slice(&full_tag.0[..BEACON_MAC_LEN]);
+    tag.copy_from_slice(&full_tag[..BEACON_MAC_LEN]);
     tag
 }
 

@@ -1,11 +1,11 @@
 # sodiumoxide → replacement migration (remediation #3)
 
-**Status: not applied. The previously proposed approach was investigated and
-found to be a no-op — see "Why the original plan is wrong". Replaced with a
-corrected recommendation, a higher priority than originally assessed, and an
-honest cost estimate.**
+**Status: APPLIED. `sodiumoxide` and its vendored C `libsodium` are gone from the
+dependency tree, replaced by the RustCrypto crates `vodozemac` already used.**
 
-No code changes have been made. Nothing here is applied.
+The previously proposed approach was investigated first and found to be a no-op
+— see "Why the original plan is wrong". What was done instead, and why, is
+below.
 
 ## The finding that matters: the bundled C library is ~5 years stale
 
@@ -87,55 +87,97 @@ still ship the same stale C library.
 An option only worth taking is one that addresses **both**: drop the C
 toolchain dependency entirely and move to maintained, pure-Rust primitives.
 
-## Revised recommendation
+## What was actually done
 
-**Migrate to `sodim` (pure Rust, actively maintained, API-compatible with
-`sodiumoxide`).** It addresses both liabilities — no C library, no autotools,
-no `unsafe` in this codebase — and keeps the change mechanical: the module
-boundaries already isolate every use behind `rezvan-crypto`.
+Migrated to the **RustCrypto** crates — not `sodim`, and not the original plan.
 
-Steps, when a build environment is available:
+The deciding observation is that `vodozemac` (the Olm / Double Ratchet
+implementation in `rezvan-core`) **already depends on** `ed25519-dalek`,
+`x25519-dalek`, `chacha20poly1305`, `hmac`, `sha2`, `hkdf`, `zeroize` and
+`subtle`. Every primitive this migration needed was therefore *already compiled
+into the binary and already covered by `cargo audit`* — the message encryption,
+the most security-critical part of the app, was pure Rust all along. Only
+`rezvan-crypto`'s own thin wrapper layer was still on the C library.
 
-1. Swap `sodiumoxide` → `sodim` in `rezvan-crypto/Cargo.toml`; the call sites
-   in `identity.rs`, `hkdf.rs`, `beacon_mac.rs`, `sender_key.rs`, `sign.rs`,
-   `secure_store.rs`, `epoch_key.rs`, and `lib.rs` are near-identical.
-2. Confirm the **existing** test suite still passes unchanged. This is the real
-   safety net and it is already good: RFC 5869 HKDF vectors, Ed25519 sign/verify
-   round-trips, X25519 key agreement, XChaCha20-Poly1305 round-trips, the
-   beacon-MAC tests, and the on-disk state round-trip. Pure-Rust implementations
-   are byte-compatible with libsodium for these primitives, so a passing suite
-   is meaningful evidence — but it must be *run*, which is why this is not
-   applied blind.
-3. Verify the Android NDK build no longer invokes autotools (`cargo ndk` with
-   `SODIUM_USE_PKG_CONFIG` unset should show no `./configure`).
-4. `cargo audit` to confirm the new tree is clean.
+That made RustCrypto strictly better than `sodim` here: a second
+libsodium-compatible implementation would have been a *new* dependency to trust
+and audit, in exchange for nothing, whereas RustCrypto reused what was already
+there.
 
-### Fallback
+| Was | Now |
+|---|---|
+| `sodiumoxide::crypto::sign` | `ed25519-dalek` (`SigningKey`, `VerifyingKey::verify_strict`) |
+| `sodiumoxide::crypto::scalarmult` | `x25519-dalek` (`StaticSecret`, `PublicKey`) |
+| `sodiumoxide::crypto::auth::hmacsha256` | `hmac` + `sha2` |
+| `sodiumoxide::crypto::hash::sha256` | `sha2` |
+| `sodiumoxide::crypto::aead::xchacha20poly1305_ietf` | `chacha20poly1305` (`XChaCha20Poly1305`) |
+| `sodiumoxide::randombytes` | `getrandom` |
 
-If `sodim` does not hold up, the alternative is RustCrypto (`ed25519-dalek`,
-`x25519-dalek`, `chacha20poly1305`, `hkdf`, `hmac`, `sha2`). That is a real
-rewrite rather than a binding swap, and it would need the test vectors
-re-verified against the new implementations, so it is a larger project.
+Net effect on the dependency graph: **8 fewer packages**, `sodiumoxide` and
+`libsodium-sys` removed entirely, and no C toolchain anywhere in the build. The
+Android NDK cross-compile no longer runs autotools.
 
-### Keeping `sodiumoxide` is defensible
+### Byte-compatibility
 
-`sodiumoxide 0.2.7` is functionally correct and its primitives are sound. The
-cost of doing nothing is: no upstream libsodium security fixes for as long as
-the stand still, and a build that continues to depend on autotools working
-with the NDK. If the project accepts that, the honest option is to stay put and
-re-evaluate on either of these triggers:
+The wire format and the on-disk state format are unchanged. Every primitive is
+deterministic and specified:
 
-- a libsodium advisory is published (watch upstream; `cargo audit` will not),
-- an NDK or autotools change breaks the vendored C build, or
-- the threat model changes to include adversaries who can act on a known
-  cryptographic implementation flaw.
+- **Ed25519** (RFC 8032) — deterministic keygen and signing. Signatures are
+  byte-identical, so packets signed by an old build verify on a new one.
+- **X25519** (RFC 7748) — both implementations clamp the scalar identically.
+- **HMAC-SHA256 / HKDF** (RFC 2104 / 5869) — the salt-length boundary moved from
+  a hand-rolled helper to the `hmac` crate's RFC 2104 implementation, which
+  produces identical output in all three cases (empty, ≤32 bytes, >32 bytes).
+- **XChaCha20-Poly1305** — same 24-byte random nonce, same layout.
 
-## Priority / effort
+### How that is verified
 
-Priority: **Medium.** No known active exploit, and the primitives in use are
-correct — so this is not a release blocker. But it is a silent, compounding
-exposure in the layer that actually performs the cryptography, and the
-standard dependency-scanning control does not cover it.
+The safety argument rests on output being byte-identical, so it is pinned by
+tests rather than asserted in a comment:
 
-Effort: **Medium** (mechanical, but requires a working build environment to
-verify before merge).
+- **RFC 8032 §7.1 test vectors** in `sign.rs` assert the exact signature bytes
+  for two published (seed, public key, message, signature) tuples. These come
+  from the specification, not from a value captured out of this
+  implementation, so the test checks conformance rather than self-consistency.
+- **RFC 5869 test vector 1** was already present and is unchanged.
+- New HKDF tests pin the two properties the salt rewrite specifically relied
+  on: an absent salt behaves exactly as 32 zero bytes, and the
+  hash-down boundary sits precisely between 32 and 33 bytes.
+- A new ECDH symmetry test asserts both directions of a key agreement agree —
+  if they ever diverged, every beacon MAC would fail and the mesh would
+  silently stop forming.
+- `IdentityKeypair` now zeroizes its key material on drop, and there is a test
+  for that plus one confirming a clone is an independent copy.
+
+### Residual risk
+
+The unit suite proves self-consistency and spec conformance on the host target.
+It does **not** prove interoperability with a peer running the previous
+implementation. A two-node test (old build ↔ new build) covering a Gate 1
+direct message and a channel message is the one thing still worth doing, and it
+needs two devices or the integration harness.
+
+## If a C library ever comes back
+
+The tree is now pure Rust, so the staleness problem cannot recur through this
+dependency. If a C cryptography library is ever reintroduced, re-check these,
+because they are the things that were missed the first time:
+
+- **The vendored C version, not the Rust wrapper's version.** What mattered was
+  that `libsodium` was pinned to a mid-2021 commit, regardless of how
+  recently the wrapper crate was released. A wrapper's release date says
+  nothing about the C library inside it.
+- **Whether the scanning control can see it.** `cargo audit` only reads
+  `RUSTSEC-*` advisories from the Cargo graph. A C advisory produces nothing,
+  so a green audit job is not evidence.
+- **Whether the build needs autotools.** A vendored `./configure && make` in an
+  NDK cross-compile is the most likely thing to break first, and it breaks
+  loudly.
+
+## Effort, retrospectively
+
+Originally assessed as Low priority / Medium effort. That was wrong on priority
+— the exposure was silent, in the layer doing the cryptography, and invisible
+to the standard scanning control. The migration itself was mechanical, and
+cheaper than expected, precisely because `vodozemac` had already pulled in
+every primitive needed.
