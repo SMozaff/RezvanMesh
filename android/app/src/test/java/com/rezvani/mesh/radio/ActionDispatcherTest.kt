@@ -93,7 +93,7 @@ class ActionDispatcherTest {
 
         assertTrue("expected Queued, got $result", result is SendResult.Queued)
         // 192.168.0.1 in network byte order, i.e. the sign bit set.
-        assertEquals(0xC0A80001, radio.wifiIp)
+        assertEquals(0xC0A80001.toInt(), radio.wifiIp)
         assertEquals(4237, radio.wifiPort)
         assertArrayEquals(data, radio.wifiData)
     }
