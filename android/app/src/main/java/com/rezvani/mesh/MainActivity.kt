@@ -128,7 +128,7 @@ class MainActivity : ComponentActivity() {
             // failure and allow a restart -- otherwise `serviceStarted` stays
             // true forever and the mesh silently never comes back up.
             serviceStarted = false
-            DiagLogger.log(this, "Radio service disconnected unexpectedly; will restart")
+            DiagLogger.log(this@MainActivity, "Radio service disconnected unexpectedly; will restart")
             recheckAndStart()
         }
     }
@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
         }
         serviceStarted = true
         try {
-            val intent = Intent(this, RezvanRadioService.class.java)
+            val intent = Intent(this, RezvanRadioService::class.java)
             startForegroundService(intent)
             // Record that a bind was actually requested *before* calling
             // bindService, so onDestroy can always pair an unbindService with a
