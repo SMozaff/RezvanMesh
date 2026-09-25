@@ -113,11 +113,11 @@ class ActionDispatcherTest {
         val radio = FakeRadioController()
 
         // Only 5 bytes: IP but no port.
-        val tooShort = actionFrame(0x02, byteArrayOf(192.toByte(), 168, 0, 1, 0))
+        val tooShort = actionFrame(0x02, byteArrayOf(192.toByte(), 168.toByte(), 0, 1, 0))
         assertTrue(ActionDispatcher.dispatch(tooShort, radio) is SendResult.Failed)
 
         // Header present but no packet data.
-        val noData = actionFrame(0x02, wifiPayload(byteArrayOf(192.toByte(), 168, 0, 1), 4237, ByteArray(0)))
+        val noData = actionFrame(0x02, wifiPayload(byteArrayOf(192.toByte(), 168.toByte(), 0, 1), 4237, ByteArray(0)))
         assertTrue(ActionDispatcher.dispatch(noData, radio) is SendResult.Failed)
 
         assertEquals(null, radio.wifiIp)
