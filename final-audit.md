@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-25  
 **Scope:** Full codebase — Android/Kotlin frontend, Rust core (rezvan-core, rezvan-crypto, rezvan-common), CI, docs, tests  
-**Status:** Audit complete. 30 of 31 findings remediated. See *Remediation Status*.
+**Status:** 29 of 31 findings remediated. **L10 investigated and re-scoped — the
+original plan was wrong; see below.** See *Remediation Status*.
 
 ---
 
@@ -39,8 +40,54 @@
 | **L08** | Fixed | `DiagLogger.kt` — full UUID session id |
 | **L09** | Fixed | `session.rs` — full annotated key-bundle layout |
 
-**Not remediated:** L01 (documented tradeoff — intentional), L10
-(`sodiumoxide` migration, already tracked in `rust/SODIUMOXIDE_MIGRATION.md`).
+**Not remediated:** L01 (documented tradeoff — intentional). L10 was
+investigated; see below.
+
+### L10 — investigated, and the plan was wrong
+
+The migration plan in `rust/SODIUMOXIDE_MIGRATION.md` recommended swapping
+`sodiumoxide` for `libsodium-sys-stable` plus a hand-written FFI wrapper,
+on the grounds that it keeps output byte-identical and is therefore the
+lowest-risk path.
+
+Investigating it turned up two things that change the conclusion:
+
+**1. The plan is a no-op.** `sodiumoxide 0.2.7` is *itself* a thin safe wrapper
+over `libsodium-sys 0.2.7` — that entry is already in this repo's `Cargo.lock`
+as a transitive dependency. `-stable` repackages the same C library. So the
+proposed change would convert a safe API into `unsafe` FFI across six files, and
+gain nothing: the maintenance status of the layer doing the work is identical.
+
+**2. The real finding is worse than the original assessment.** `sodiumoxide`
+0.2.7 is from **21 June 2021** and has had no release since. Its changelog
+pins the vendored libsodium C library to that date — so **every libsodium
+security fix published in the intervening five years is absent from the
+shipped binary**, with no mechanism to obtain one short of replacing the
+dependency. That C library is what actually implements Ed25519, X25519,
+XChaCha20-Poly1305 and HMAC-SHA256 here.
+
+This was originally logged as "Low priority, no active exploit". It is
+re-scoped to **medium**, for two reasons:
+
+- It is a silent, compounding exposure in the layer that performs the
+  cryptography, not merely an unmaintained wrapper.
+- **`cargo audit` cannot see it.** That job inspects `RUSTSEC-*` advisories in
+  the Cargo graph; a C-level advisory in a vendored library produces nothing.
+  The `rust-audit` job would stay green indefinitely. A green audit job is
+  therefore *not* evidence that the cryptography is current, and the CI job doc
+  now says so.
+
+Action taken: the migration document was rewritten with the evidence, the
+corrected analysis, a claim-by-claim table against the original proposal, a
+recommendation that actually addresses both liabilities (`sodim`, or
+RustCrypto as fallback), the option of keeping the status quo with explicit
+re-evaluation triggers, and the corrected priority.
+
+No code was changed, deliberately. Doing the migration as originally specified
+would have been a net negative, and the version that would actually help
+(`sodim`) is a new dependency that needs `Cargo.lock` regenerated — which
+cannot be done here, since CI builds with `--locked` and local builds are off
+the table by instruction.
 
 ### H01 and L07 in detail
 
@@ -351,19 +398,43 @@ plus 9 new findings found and fixed during the work.
 
 ### Remaining
 
-1. **Push this batch to CI.** Phase 3 is written but unverified; CI is the
-   reviewer.
-2. **L10 — `sodiumoxide` → `libsodium-sys`.** The last open finding. Already
-   scoped in `rust/SODIUMOXIDE_MIGRATION.md`; it is a dependency swap with no
-   behavioural change intended, so it wants its own commit and its own
-   verification rather than being folded into anything else.
+1. **Push this batch to CI.** Phase 4 is written but unverified; CI is the
+   reviewer. The change here is CI configuration and a Markdown file, so the
+   blast radius is small — but the new reporting steps have never executed.
+2. **L10, for real.** Migrate off the ~5-year-old vendored libsodium. The plan
+   is now correct and scoped; it needs a build environment to land because
+   `Cargo.lock` must be regenerated and CI uses `--locked`. Highest-value
+   security item still open.
 3. **L01 — epoch key blast radius.** Documented and accepted: any mesh member
-   that holds the shared beacon epoch key can forge beacons appearing to come
-   from any other member. Worth revisiting only if the threat model changes
-   (e.g. a deployment where mutual distrust between members is expected).
-4. **Device-level verification** for the paths CI cannot reach: BLE/Wi-Fi
-   transport, `nativeSaveState` across a restart, the H01 Room migration
-   install-over-existing-DB path, and a fresh install (which skips migrations).
-5. **CI hardening** — `cargo fmt` and `clippy` are both non-blocking and both
-   currently failing on pre-existing code (138 fmt diffs, 3 clippy errors). A
-   dedicated "format the codebase" commit would let them become blocking.
+   holding the shared beacon epoch key can forge beacons appearing to come from
+   any other member. Revisit only if the threat model changes.
+4. **Device-level verification** for what CI cannot reach: BLE/Wi-Fi transport,
+   `nativeSaveState` across a restart, the H01 migration install-over-existing-DB
+   path, and a fresh install (which skips migrations entirely).
+5. **Device-level crypto interop check.** `sodiumoxide` has been in the tree
+   for a long time; the primitives are exercised by unit tests, but a
+   two-implementation agreement test (e.g. decrypt a message produced by
+   libolm, or vice versa) is not present and would catch a mis-wired key
+   derivation that round-trip tests cannot.
+
+## CI hardening (done)
+
+`cargo fmt`, `cargo clippy`, and `cargo audit` all run in CI with
+`continue-on-error: true`, which renders as a **green check**. Three separate
+failure modes were therefore invisible: nobody could tell whether the backlog
+was shrinking or growing, and "it was already failing" was indistinguishable
+from "I broke it".
+
+- The gate steps now capture their output with `tee`, so the numbers are
+  measurable without re-running them.
+- A reporting step publishes the fmt/clippy backlog to the job summary on every
+  run, and states the exact promotion path to a hard gate (bring the count to
+  zero, drop `continue-on-error`). Deliberately left as a separate cleanup
+  change rather than bundled in here.
+- `cargo audit`'s actual output is likewise published, instead of being
+  discarded behind a green check.
+- The `rust-audit` job doc now records its **scope limit**: it sees Rust
+  advisories only, and is not a control for the vendored C library (see L10).
+
+The counts themselves were not measured here — this phase ran no builds — so
+the first CI run is what establishes the baseline.

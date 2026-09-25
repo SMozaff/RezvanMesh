@@ -44,19 +44,63 @@ jobs:
 
       - name: Check formatting
         working-directory: rust
-        run: cargo fmt --all -- --check
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee /tmp/gate-fmt.txt
         # Non-blocking for now: the codebase predates a fmt pass and hasn't
         # been normalized yet. Flip this to a hard failure once it has.
         continue-on-error: true
 
       - name: Clippy (all crates, all targets)
         working-directory: rust
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee /tmp/gate-clippy.txt
         # Non-blocking for now: there is a pre-existing set of style-only
         # clippy warnings (see the PR/commit that introduced this workflow
         # for the baseline count). Once that baseline is cleaned up, remove
         # continue-on-error so new warnings fail CI.
         continue-on-error: true
+
+      # -------------------------------------------------------------------
+      # Make the two non-blocking gates above *measurable*.
+      #
+      # `continue-on-error: true` renders as a green check in the checks list,
+      # so today these two failures are effectively invisible: nobody knows
+      # whether the backlog is shrinking or growing, and "it was already
+      # failing" is indistinguishable from "I broke it". This step publishes
+      # the current counts to the job summary so the trend is visible on every
+      # run, and states the promotion path to a hard gate explicitly.
+      #
+      # It parses the output the gate steps already captured, so it costs a few
+      # greps rather than a second fmt + clippy run.
+      #
+      # To promote either one to blocking:
+      #   1. Bring the count to zero (`cargo fmt --all` for fmt; fix the
+      #      reported lints for clippy).
+      #   2. Delete that step's `continue-on-error: true`.
+      # Both are deliberately left to a dedicated cleanup change rather than
+      # bundled into a fix that has a different reason to exist.
+      # -------------------------------------------------------------------
+      - name: Report lint/format backlog (informational)
+        if: always()
+        run: |
+          fmt_files=$(grep '^Diff in' /tmp/gate-fmt.txt 2>/dev/null \
+            | sed 's/:[0-9]*:$//' | sort -u | wc -l)
+          clippy_count=$(grep -cE '^(warning|error)(\[|:)' /tmp/gate-clippy.txt 2>/dev/null || true)
+          {
+            echo "### Lint / format backlog (informational)"
+            echo ""
+            echo "| Gate | Count | Target |"
+            echo "|---|---|---|"
+            echo "| \`cargo fmt --all -- --check\` | ${fmt_files} file(s) unformatted | 0 |"
+            echo "| \`cargo clippy --workspace --all-targets\` | ${clippy_count} diagnostic(s) | 0 |"
+            echo ""
+            echo "Both gates are currently \`continue-on-error\`, so a failure here"
+            echo "shows as a green check. Bring a count to zero and delete that"
+            echo "step's \`continue-on-error\` to make it blocking."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "fmt backlog: ${fmt_files} file(s); clippy backlog: ${clippy_count} diagnostic(s)"
 
       - name: Verify Cargo.lock is up to date
         working-directory: rust
@@ -83,11 +127,14 @@ jobs:
   # Dependency vulnerability / advisory scan. Separate from rust-test so a
   # newly-disclosed advisory (which nobody here controls the timing of)
   # doesn't block a same-day merge on its own -- surfaced as a visible,
-  # non-blocking report instead. rust/SODIUMOXIDE_MIGRATION.md already
-  # documents that `sodiumoxide` is unmaintained upstream; this job is what
-  # would actually notice if that unmaintained status turns into a real
-  # advisory (RUSTSEC-*) rather than relying on someone remembering to
-  # check manually.
+  # non-blocking report instead.
+  #
+  # IMPORTANT SCOPE LIMIT: this job only sees Rust advisories (RUSTSEC-*) in
+  # the Cargo graph. It cannot see a C-level advisory in a vendored native
+  # library. In particular it gives NO signal about the vendored libsodium
+  # pinned by `sodiumoxide`, which is roughly five years old -- see
+  # rust/SODIUMOXIDE_MIGRATION.md. Do not read a green audit job as evidence
+  # that the cryptography is current; it is not.
   # ---------------------------------------------------------------------
   rust-audit:
     name: Rust — dependency advisory scan
@@ -104,8 +151,24 @@ jobs:
 
       - name: Run cargo audit
         working-directory: rust
-        run: cargo audit
+        run: |
+          set -o pipefail
+          cargo audit 2>&1 | tee /tmp/gate-audit.txt
         continue-on-error: true # advisory-only for now; see job docs above
+
+      # `cargo audit` exits non-zero on findings, and `continue-on-error` turns
+      # that into a green check. Surface the actual findings so an advisory is
+      # not something a reviewer has to go looking for.
+      - name: Report advisories (informational)
+        if: always()
+        run: |
+          {
+            echo "### cargo audit"
+            echo ""
+            echo '```'
+            tail -40 /tmp/gate-audit.txt 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------
   # Android: cross-compile the Rust core for Android targets, then build
