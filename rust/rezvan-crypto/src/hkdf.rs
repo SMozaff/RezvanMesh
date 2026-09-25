@@ -21,12 +21,6 @@ use sodiumoxide::crypto::hash::sha256;
 /// that the `i as u8` cast below is provably lossless for every reachable `n`.
 pub const MAX_OUTPUT_LEN: usize = 32 * 255;
 
-/// Largest `length` accepted by [`hkdf_sha256`].
-///
-/// Asserted at the top of every call so that the `i as u8` counter byte below
-/// is provably lossless: `length <= 32 * 255` implies `n <= 255`.
-pub const MAX_OUTPUT_LEN: usize = 32 * 255;
-
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u8> {
     assert!(
         length <= MAX_OUTPUT_LEN,
