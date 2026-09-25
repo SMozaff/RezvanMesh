@@ -7,7 +7,7 @@
   this file, so this rule is not currently consulted. It is kept as
   defence-in-depth: the previous contents of this file opted *in* to
   everything (`<include domain="... " path="."/>` for sharedpref, database and
-  file), which meant that removing the `"false"` override -- a one-character
+  file), which meant that removing the `"false"` override, a one-character
   edit that looks harmless -- would have started shipping the encrypted
   database, the Keystore-wrapped identity seed preferences, and the plaintext
   contacts list into Google backup. A file that silently does the opposite of
