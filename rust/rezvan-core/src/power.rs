@@ -77,12 +77,6 @@ pub fn get_ogm_interval_secs(state: PowerState) -> u64 {
     }
 }
 
-/// Whether the engine should process incoming data packets in the current state.
-#[cfg(test)]
-pub fn should_process_data(state: PowerState) -> bool {
-    state != PowerState::Dead
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
