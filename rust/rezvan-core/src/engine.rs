@@ -1234,8 +1234,8 @@ mod tests {
         // blindly store Mallory's keys under Alice's NodeId -- letting
         // Mallory forge beacon MACs "from" Alice and hijack anything
         // addressed to Alice's NodeId.
-        let mut alice = make_engine(1);
-        let mallory = make_engine(3);
+        let alice = make_engine(1);
+        let mut mallory = make_engine(3);
 
         let bundle = mallory.key_bundle(); // Mallory's OWN keys
                                            // Splice: build the packet as if Mallory sent it, but with the
