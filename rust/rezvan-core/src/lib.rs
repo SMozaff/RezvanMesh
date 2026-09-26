@@ -10,7 +10,6 @@ mod engine;
 mod routing;
 mod power;
 mod session;
-mod crypto;
 mod action;
 mod persistence;
 
