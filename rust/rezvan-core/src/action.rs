@@ -1,6 +1,7 @@
 use rezvan_common::{DecryptedMessage, MessageId, NodeId};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Action {
     /// Send a BLE advertisement carrying an `AdvBeaconExt` payload.
     SendBleAdvertisement { data: Vec<u8> },
