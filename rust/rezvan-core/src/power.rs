@@ -57,10 +57,10 @@ pub fn should_advertise(state: PowerState) -> bool {
 /// Whether Wi‑Fi Direct should be enabled in the given power state.
 #[cfg(test)]
 pub fn should_enable_wifi(state: PowerState) -> bool {
-    match state {
-        PowerState::Emergency | PowerState::Active | PowerState::Balanced => true,
-        _ => false,
-    }
+    matches!(
+        state,
+        PowerState::Emergency | PowerState::Active | PowerState::Balanced
+    )
 }
 
 /// OGM broadcast interval (seconds) for the given power state.
