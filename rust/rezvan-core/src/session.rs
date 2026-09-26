@@ -69,6 +69,17 @@ pub enum SessionError {
     Olm(String),
 }
 
+impl std::fmt::Display for SessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoPeerKeys => f.write_str("peer keys are unavailable"),
+            Self::NoSession => f.write_str("session does not exist"),
+            Self::BadMessage => f.write_str("invalid Olm message"),
+            Self::Olm(message) => write!(f, "Olm error: {message}"),
+        }
+    }
+}
+
 /// A peer's advertised keys: Olm Curve25519 half (message encryption) plus
 /// the seed-derived mesh identity keys (beacon MAC + packet signatures).
 /// `olm_identity`/`one_time` are vodozemac's Olm account keys -- distinct
@@ -458,10 +469,6 @@ impl SessionManager {
     /// `None` if we haven't received a KeyAnnouncement from this peer yet --
     /// callers MUST treat that as "cannot verify this beacon" and not act on
     /// its contents for routing.
-    pub fn peer_x25519_identity(&self, peer: &NodeId) -> Option<[u8; 32]> {
-        self.peer_keys.get(peer).map(|k| k.x25519_identity)
-    }
-
     /// The peer's mesh Ed25519 identity key, for verifying MeshPacketHeader
     /// signatures. `None` if no KeyAnnouncement has been received yet.
     pub fn peer_ed25519_identity(&self, peer: &NodeId) -> Option<[u8; 32]> {
@@ -478,10 +485,6 @@ impl SessionManager {
     }
 
     /// Our own mesh X25519 private key, for deriving a beacon MAC key.
-    pub fn own_x25519_private(&self) -> [u8; 32] {
-        self.identity.private_x25519
-    }
-
     // --- message encryption -------------------------------------------------
 
     pub fn encrypt(&mut self, peer: &NodeId, plaintext: &[u8]) -> Result<Vec<u8>, SessionError> {
@@ -544,14 +547,6 @@ impl SessionManager {
     ) -> Result<(), SessionError> {
         let _ = self.decrypt(peer, wire)?;
         Ok(())
-    }
-
-    pub fn has_session(&self, peer: &NodeId) -> bool {
-        self.sessions.contains_key(peer)
-    }
-
-    pub fn remove_session(&mut self, peer: &NodeId) {
-        self.sessions.remove(peer);
     }
 
     // --- on-disk persistence -------------------------------------------------
@@ -735,7 +730,7 @@ mod tests {
             generate_identity(&[2u8; 32]),
         );
         let keep1 = mgr.create_channel_key(1);
-        let drop_me = mgr.create_channel_key(2);
+        let _drop_me = mgr.create_channel_key(2);
         let keep2 = mgr.create_channel_key(3);
 
         assert!(mgr.remove_channel_key(2));
