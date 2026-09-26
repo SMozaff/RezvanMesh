@@ -140,8 +140,17 @@ The tests:
   function (`channelsToRevoke`, 16 Kotlin unit tests); 5 Rust tests cover
   removal, non-interference between channels, sorted/deduplicated enumeration,
   survival of revocation across export/import, and that a removed channel can no
-  longer send. `leaveChannel` itself had **no callers**, so the revoke path was
-  unreachable from the UI.
+  longer send.
+
+  `leaveChannel` originally had **no callers at all**, so even correct revocation
+  was unreachable — a user could not leave a channel in the first place.
+  `ChannelListItem` now carries a leave button, shown only when the user is
+  actually a member (`isJoined` and a non-null `senderKey`; a merely discovered
+  channel has no key to revoke, so a button there would be a no-op that reads as
+  broken). Leaving is irreversible without another member's key, so it goes
+  through the shared `ConfirmationDialog` with `isDestructive = true`, matching
+  the existing delete-contacts and clear-messages flows, and the confirmation
+  states the real consequences rather than just naming the action.
 
 **The circularity in round-trip tests is now broken.** Every derivation the
 migration touched is also pinned as a known-answer test against an
@@ -208,6 +217,24 @@ the same pass.
 | **N8** | Medium | Crash dossiers (device fingerprint, git SHA, stack trace, 200 diag lines with peer NodeIds and MAC fragments) were written to `MediaStore.Downloads` — user-visible, media-scanner-indexed, world-readable on older releases. | `RezvanApplication.kt` |
 | **N9** | Medium | `ContactsRepository` was instantiated once per consumer, each with an un-cancellable `SupervisorJob`, and each racing to import the same legacy file. | `ContactsRepository.kt` |
 | **N10** | **High** | **Leaving a channel never actually revoked anything.** The H01 fix made the database authoritative for membership and documented that leaving "revokes the key", but it only cleared the database row. There was **no native channel-key removal path at all**, so the engine kept the key in memory for the life of the process, the periodic engine-state save wrote it straight back into the encrypted state file, and the next start-up restored it. The UI said "left" while the device could still decrypt the channel indefinitely. Reconcile-on-start-up also only ever *installed* keys, never revoked, so the two could not converge. | `session.rs`, `engine.rs`, `lib.rs`, `RezvanRadioService.kt`, `MeshCore.kt`, `ChannelsViewModel.kt` |
+
+### Build hygiene
+
+* `cargo fmt --all -- --check` had been red for the repository's whole history,
+  which made it useless as a signal — it could not distinguish "I broke
+  formatting" from "it was already like this". The backlog is now cleared, so
+  that gate can be promoted from `continue-on-error` to blocking. The change was
+  verified to be formatting-only: the set of `use` statements is identical in
+  all 17 touched files, and stripping whitespace plus normalizing trailing
+  commas leaves only rustfmt removing one redundant closure block.
+* `rezvan-core/src/crypto.rs` was a leftover single-line shim from the
+  sodiumoxide migration re-exporting three names nothing used, behind a private
+  `mod crypto;`. Removed, which cleared the last `unused imports` diagnostic.
+* Still outstanding, and **not** fixed here: `cargo clippy --workspace
+  --all-targets -- -D warnings` reports 20 pre-existing errors (dead code in
+  `rezvan-core`/`rezvan-crypto`, and manual `is_multiple_of()` implementations).
+  The fmt gate is clean, but clippy cannot be promoted to blocking until that
+  backlog is addressed.
 
 ### Verification
 
