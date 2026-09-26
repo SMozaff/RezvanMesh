@@ -734,7 +734,7 @@ mod tests {
         mgr.set_channel_key(42, [0xAA; 32]);
 
         let ids = mgr.channel_key_ids();
-        assert_eq!(ids, vec![1, 42, 300, 65535]);
+        assert_eq!(ids, vec![1, 7, 42, 300, 65535], "sorted, and 42 written twice appears once");
         let mut sorted = ids.clone();
         sorted.sort_unstable();
         assert_eq!(ids, sorted, "ids must be sorted for a deterministic JNI payload");
