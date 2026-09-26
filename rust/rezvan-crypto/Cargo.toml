@@ -11,11 +11,9 @@ edition = "2021"
 # transitive dependencies -- are new to this build. They were previously
 # already compiled into the binary and already covered by `cargo audit`.
 #
-# This replaced `sodiumoxide` + its vendored C `libsodium`. See
-# SODIUMOXIDE_MIGRATION.md for why that swap was worth doing: the C library was
-# pinned to a mid-2021 release, so several years of upstream libsodium security
-# fixes were absent with no upgrade path, and building it required autotools
-# (`./configure && make`) inside the Android NDK cross-compile.
+# The previous sodiumoxide/libsodium implementation was replaced by maintained
+# RustCrypto primitives already used by the project. See docs/CRYPTOGRAPHY.md
+# for the current primitive map and interoperability/known-answer verification.
 #
 # Every primitive used here is byte-for-byte compatible with what it replaced
 # (Ed25519 and X25519 per RFC 8032/7748, HMAC-SHA256 and HKDF per RFC 2104/5869,
