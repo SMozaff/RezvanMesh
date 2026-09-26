@@ -1,627 +1,815 @@
-# Rezvan Mesh – Decentralized Off-Grid Communication
+# RezvanMesh
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-![Platforms](https://img.shields.io/badge/platform-Android%208.0%2B-brightgreen)
-![Language](https://img.shields.io/badge/languages-Kotlin%20%7C%20Rust%20%7C%20C-orange)
-![Status](https://img.shields.io/badge/status-Beta%20(Functional%20Testing)-yellow)
+**Decentralized, encrypted, off-grid communication for Android.**
 
----
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Platform: Android](https://img.shields.io/badge/platform-Android%208.0%2B-brightgreen.svg)]()
+[![Status: Beta](https://img.shields.io/badge/status-engineering%20%2F%20beta-yellow.svg)]()
 
-## Mission
+RezvanMesh is an Android peer-to-peer communication system designed to operate without cellular service, the public Internet, or a centralized server. Its primary transport is Bluetooth Low Energy (BLE), with multi-hop routing implemented in the Rust core and a Wi-Fi Direct transport available as a secondary path.
 
-**Rezvan Mesh** is a peer-to-peer mesh communication application for Android devices. It enables resilient, off-grid messaging during nationwide internet shutdowns and infrastructure failures—without relying on cellular towers, internet connectivity, or centralized servers.
-
-**Target Scenario:** Iranian civilians during communications blackouts, with extreme power efficiency and resilience under jamming/SIGINT threats.
-
-**Core Principle:** Device-to-device communication only. Zero external dependencies. All encryption on-device.
+> **Current status:** the software stack builds and passes automated Rust/Android verification, but physical radio validation is still required before the application should be described as production-ready.
 
 ---
 
-## Features (Current Release)
+## Contents
 
-### ✅ Implemented & Tested
-
-- **Mesh Routing** – BATMAN-Adv-style protocol over BLE advertisement (1-hop discovery) + GATT unicast. Multi-hop relay (packets forwarded through an intermediate node toward a destination that isn't a direct neighbor) is implemented and unit-tested (`rezvan-core`'s `engine::tests` relay tests) but not yet validated on real BLE hardware across 3+ physical devices — see Known Issues
-- **End-to-End Encryption** – Signal Protocol (X3DH + Double Ratchet) via libsodium
-- **Text Messaging** – Up to 10,000 characters per message
-- **Voice Broadcasting** – Opus codec @ 16 kbps, push-to-talk up to 60 seconds
-- **Emergency Alerts** – SOS button with 5 severity levels, network-wide flooding
-- **Offline Identity** – 32-byte `SecureRandom` seed, stored via Android Keystore-backed `EncryptedSharedPreferences` (no backup/recovery phrase exists yet — see Known Issues)
-- **Encrypted Storage** – SQLCipher database for contacts, messages, voice logs
-- **Multi-Language UI** – Farsi (primary) + English, runtime switchable
-- **Power Management** – 7-state power machine (Emergency → Hibernation) with dynamic duty cycling
-- **Diagnostics** – Real-time routing/radio stats, searchable log export, crash dossiers
-
-### ⏳ In Development
-
-- **GATT Message Delivery** – End-to-end 2-device test pending
-- **Voice Playback on Receiver** – MediaPlayer integration incomplete
-- **3+ Device Mesh Stability** – Multi-hop routing validation needed
-- **WiFi Direct Transport** – Group formation, server socket, and client handling are implemented (see `RadioControllerImpl.kt`); not merely stubs. Known gap: no relay/forwarding over this transport yet, and peer discovery assumes BLE has already resolved the group-owner's address.
+- [Current State](#current-state)
+- [What Works](#what-works)
+- [What Is Not Complete](#what-is-not-complete)
+- [Architecture](#architecture)
+- [Security and Cryptography](#security-and-cryptography)
+- [Messaging and Routing](#messaging-and-routing)
+- [Storage and Identity](#storage-and-identity)
+- [Power Management](#power-management)
+- [Android Support](#android-support)
+- [Build From Source](#build-from-source)
+- [Testing](#testing)
+- [CI](#ci)
+- [Physical Device Validation](#physical-device-validation)
+- [Project Structure](#project-structure)
+- [Development Rules](#development-rules)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
-## System Architecture
+## Current State
+
+### Automated verification
+
+The latest validated commit is:
 
 ```
-┌──────────────────────────────────────┐
-│     Jetpack Compose UI (Kotlin)      │
-│  Status│SOS│PTT│Messages│Contacts   │
-└──────────────────────────────────────┘
-            ↕ JNI Bridge
-┌──────────────────────────────────────┐
-│   RezvanRadioService (Kotlin)        │
-│  BLE Scanning/Advertising/GATT       │
-│  WiFi Direct (stubs)                 │
-└──────────────────────────────────────┘
-            ↕ Native Interface
-┌──────────────────────────────────────┐
-│   MeshEngine (Rust)                  │
-│  BATMAN-Adv Routing                  │
-│  Packet Processing & Crypto Wrapper  │
-└──────────────────────────────────────┘
-            ↕ FFI
-┌──────────────────────────────────────┐
-│   CryptoProvider (Rust + libsodium)  │
-│  Ed25519 Signing                     │
-│  X3DH Key Exchange                   │
-│  XChaCha20-Poly1305 AEAD             │
-└──────────────────────────────────────┘
+009935d22efdf7ce3c621eff6054000b8a09e2ea
 ```
 
-### Technology Stack
+The latest CI run verified:
 
-| Layer | Language | Framework | Rationale |
-|-------|----------|-----------|-----------|
-| UI | Kotlin | Jetpack Compose | Modern, concise, Material 3 support |
-| Radio Service | Kotlin | Android Framework APIs | Native BLE/WiFi Direct access |
-| Mesh Engine | Rust | JNI | Memory safety, no GC, real-time capable |
-| Cryptography | Rust/C | libsodium (sodiumoxide) | Industry-standard, constant-time |
-| Database | Kotlin | Room + SQLCipher | Encrypted at rest, type-safe queries |
-| Build System | Gradle + Cargo | cargo-ndk | Android NDK cross-compilation |
+- Rust formatting
+- Rust Clippy with warnings treated as errors
+- Rust unit/integration tests for all workspace crates
+- Rust dependency advisory scan
+- Rust Android cross-compilation
+- Android JVM unit tests
+- Android debug APK assembly
+- APK artifact upload
+
+The final Rust verification reported:
+
+```
+fmt backlog: 0 file(s)
+clippy backlog: 0 diagnostic(s)
+```
+
+See [docs/TECHNICAL_VERIFICATION.md](docs/TECHNICAL_VERIFICATION.md) for the complete verification boundary.
+
+### The important distinction
+
+A green CI run proves software consistency and automated tests. It does **not** prove that arbitrary Android devices will maintain reliable BLE communication under real RF conditions.
+
+The following require physical-device testing:
+
+- two-device GATT message delivery
+- controlled multi-hop routing
+- disconnect/reconnect behavior
+- Android process death and state restoration
+- background/Doze/OEM power behavior
+- Wi-Fi Direct interoperability
+- long-running radio soak tests
 
 ---
 
-## Quick Start
+## What Works
+
+### Core
+
+- Rust mesh engine
+- BLE advertisement discovery
+- BLE GATT transport
+- Packet fragmentation/reassembly
+- Multi-hop route calculation and forwarding
+- Duplicate/replay handling
+- Direct-message session management
+- Encrypted channel messaging
+- Emergency broadcast/flooding protocol
+- Native state persistence
+- Power-state calculation
+- JNI integration
+
+### Android
+
+- Jetpack Compose UI
+- Foreground radio service
+- BLE scanning and advertising
+- GATT connection management
+- Room + SQLCipher encrypted database
+- Android Keystore-backed local secrets
+- QR identity/contact exchange
+- Farsi and English resources
+- Diagnostics and log export
+- Battery/power management
+- Wi-Fi Direct group/socket transport implementation
+
+### Cryptography
+
+The current implementation uses maintained Rust cryptographic crates plus vodozemac. The previously used `sodiumoxide`/vendored libsodium dependency has been removed.
+
+Current primitives include:
+
+| Purpose | Implementation |
+|---|---|
+| Signatures | Ed25519 / `ed25519-dalek` |
+| Key agreement | X25519 / `x25519-dalek` |
+| Hashing | SHA-256 / `sha2` |
+| MAC/KDF | HMAC-SHA256 + HKDF |
+| AEAD | XChaCha20-Poly1305 |
+| 1:1 sessions | vodozemac / Olm-style ratchet |
+| Secret cleanup | `zeroize` |
+| Randomness | secure platform/Rust randomness |
+
+See [docs/CRYPTOGRAPHY.md](docs/CRYPTOGRAPHY.md).
+
+---
+
+## What Is Not Complete
+
+These items are deliberately not presented as finished features.
+
+| Capability | State |
+|---|---|
+| Two-device physical GATT delivery | Implemented in software; hardware validation pending |
+| 3+ device physical mesh stability | Routing implemented; hardware validation pending |
+| Emergency physical propagation | Protocol implemented; hardware validation pending |
+| Voice transmission | Disabled |
+| Voice receiver/playback | Not release-ready |
+| Wi-Fi Direct independent mesh relay | Not complete |
+| Identity backup/recovery | Not implemented |
+| OEM-specific background reliability | Not comprehensively tested |
+| Long-running RF soak test | Not performed |
+| Production release signing pipeline | Not part of the standard CI build |
+
+Voice is intentionally blocked in the radio service until the authenticated receive/send path, replay handling, persistence/playback policy, and physical validation are complete.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 Jetpack Compose UI                  │
+│  Status · Messages · Channels · Contacts · SOS      │
+└──────────────────────────┬──────────────────────────┘
+                           │
+                           │ Kotlin service API
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│               RezvanRadioService                    │
+│ BLE scan · advertise · GATT · packet queues         │
+│ Wi-Fi Direct group/socket transport                 │
+└──────────────────────────┬──────────────────────────┘
+                           │ JNI
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│                   MeshEngine                        │
+│ routing · forwarding · packet validation · power    │
+│ sessions · channel messaging · native persistence   │
+└──────────────────────────┬──────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│                 Crypto Layer                        │
+│ Ed25519 · X25519 · HKDF/HMAC · XChaCha20-Poly1305  │
+│ vodozemac sessions · sender keys · beacon auth      │
+└─────────────────────────────────────────────────────┘
+
+                    Local persistence
+                           │
+             ┌─────────────┴─────────────┐
+             ▼                           ▼
+      Room + SQLCipher          Native encrypted state
+             │                           │
+             └──────── Android Keystore ┘
+```
+
+### Design principles
+
+1. **Offline first.** The communication path does not require a cloud backend.
+2. **Transport separation.** Rust works with stable mesh identities; Kotlin resolves those identities to current radio addresses.
+3. **Cryptographic separation.** Identity, session, channel, and network-authentication keys have separate roles.
+4. **Persistence across process death.** State required for continued encrypted communication is persisted rather than treated as UI state.
+5. **Explicit failure.** Unsupported or unsafe capabilities should fail closed instead of pretending that a message was delivered.
+
+---
+
+## Messaging and Routing
+
+### Direct messaging
+
+The intended path is:
+
+```
+Compose
+  ↓
+ViewModel / repository
+  ↓
+RezvanRadioService
+  ↓
+ActionDispatcher
+  ↓
+BLE/GATT packet transport
+  ↓
+MeshEngine
+  ↓
+session / encryption
+  ↓
+recipient
+```
+
+A local queue acceptance or GATT write result is **not** a protocol-level delivery receipt.
+
+A future delivery state must be backed by an authenticated protocol acknowledgement rather than inferred from a successful local write.
+
+### Multi-hop routing
+
+The Rust engine supports destination-aware forwarding.
+
+Conceptually:
+
+```
+A ── BLE ── B ── BLE ── C ── BLE ── D
+                                   route state
+```
+
+A node forwards toward the selected next hop rather than broadcasting every direct message to every connected peer.
+
+Routing state includes originator information, link quality/metrics, sequence/replay handling, and route expiration.
+
+### Important validation rule
+
+A five-device test only proves multi-hop routing if the physical topology prevents a direct A → E path. Several devices placed next to one another do not constitute a five-hop mesh.
+
+---
+
+## Emergency Broadcasts
+
+Emergency messages use a flooding/relay model with:
+
+- severity
+- TTL
+- duplicate suppression
+- authenticated protocol data
+- relay processing
+
+Emergency behavior still needs real-device tests covering:
+
+- propagation
+- duplicate suppression
+- packet loss
+- node disappearance
+- TTL exhaustion
+- background/Doze behavior
+
+---
+
+## Channel Messaging
+
+Channel messaging uses sender-key style symmetric encryption with authenticated sender identity.
+
+The current implementation supports:
+
+- channel state
+- sender keys
+- encrypted channel messages
+- transport dispatch
+- relay-capable packet processing
+- persistence of channel state
+
+Required device validation:
+
+```
+create channel
+    ↓
+B joins
+    ↓
+A sends
+    ↓
+B decrypts
+    ↓
+B leaves
+    ↓
+B loses access
+    ↓
+restart B
+    ↓
+B remains excluded
+```
+
+---
+
+## Storage and Identity
+
+### Identity
+
+A fresh installation generates a cryptographically random 32-byte identity seed.
+
+The stable Node ID is derived from the Ed25519 public key:
+
+```
+NodeId = SHA-256(Ed25519PublicKey)[0..8]
+```
+
+The identity is not derived from a Bluetooth MAC address or other hardware identifier.
+
+### Local secrets
+
+Sensitive application data is protected with Android Keystore-backed material.
+
+The application database uses:
+
+- Room
+- SQLCipher
+- explicit database migrations
+- encrypted database key handling
+
+Native session/key state is persisted separately from UI state so that Android process/service restarts do not automatically invalidate encrypted communication.
+
+### Identity recovery
+
+There is currently no recovery phrase, encrypted identity export, mnemonic, or device-migration mechanism.
+
+Losing or clearing the installation can therefore result in permanent loss of the local identity.
+
+---
+
+## Power Management
+
+The application contains a seven-state power model:
+
+| State | Purpose |
+|---|---|
+| Emergency | Maximum responsiveness |
+| Active | High communication availability |
+| Balanced | Normal operating mode |
+| PowerSaver | Reduced duty cycle |
+| Minimal | Survival-oriented operation |
+| Hibernation | Radio largely disabled |
+| Dead | No radio operation |
+
+The Rust engine calculates state from battery/charging conditions and Kotlin applies the resulting radio configuration.
+
+Exact battery consumption depends heavily on:
+
+- Android version
+- OEM firmware
+- BLE chipset
+- neighboring-device density
+- scan duty cycle
+- screen state
+- battery health
+
+The repository does not currently have enough physical-device measurements to claim a universal battery-consumption number.
+
+---
+
+## Android Support
+
+### SDK
+
+Current application configuration:
+
+- Minimum SDK: **26**
+- Compile SDK: **35**
+- Target SDK: **35**
+- Java/JVM target: **17**
+- Rust Android ABIs:
+  - `arm64-v8a`
+  - `armeabi-v7a`
+
+The application is intended for modern Android devices with BLE support.
+
+### Permissions
+
+Depending on Android version and enabled transport features, the application may require permissions for:
+
+- Bluetooth scanning
+- Bluetooth advertising
+- Bluetooth connections
+- camera access for QR scanning
+- nearby Wi-Fi devices for Wi-Fi Direct
+
+Permission behavior must be validated across Android versions and OEMs.
+
+---
+
+## Build From Source
 
 ### Prerequisites
 
-- **Android SDK:** API 26 (Android 8.0) minimum, compile/target API 35
-- **Android NDK:** 25.2.9519653
-- **Rust:** 1.75+ with Android targets:
-  ```bash
-  rustup target add aarch64-linux-android armv7-linux-androideabi
-  cargo install cargo-ndk
-  ```
-- **Build Machine:** Linux (Ubuntu 22.04+) or macOS with 8+ GB RAM
-- **Device:** Samsung A23, Xiaomi Redmi, or other modern Android phone (BLE required)
+Install:
 
-### Build from Source
+- Android SDK
+- Android SDK Build Tools/platform tools
+- Android NDK compatible with the current Gradle project
+- JDK 17
+- Rust toolchain
+- `cargo-ndk`
+- Python 3 for repository verification/integration scripts
+
+Rust Android targets:
 
 ```bash
-git clone https://github.com/muzaff-beep/RezvanMesh.git
-cd RezvanMesh
-
-# Build Rust libraries for Android targets
-./scripts/build_rust.sh
-
-# Build debug APK (includes Rust binaries)
-./gradlew assembleDebug
-
-# APK output: android/app/build/outputs/apk/debug/app-debug.apk
+rustup target add aarch64-linux-android armv7-linux-androideabi
+cargo install cargo-ndk
 ```
 
-### Install & Run
+### Build Rust libraries
 
 ```bash
-# Install on connected device
+./scripts/build_rust.sh
+```
+
+### Verify JNI interfaces
+
+```bash
+python3 scripts/verify_interfaces.py
+```
+
+### Build debug APK
+
+```bash
+./gradlew assembleDebug
+```
+
+Output:
+
+```
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Install
+
+```adb
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-# Launch app
-adb shell am start -n com.rezvani.mesh/.MainActivity
+The debug build uses an application ID suffix, so its package is:
 
-# View diagnostic logs
+```
+com.rezvani.mesh.debug
+```
+
+The release variant uses:
+
+```
+com.rezvani.mesh
+```
+
+Launch the appropriate package for the variant you installed.
+
+### Logs
+
+```bash
 adb logcat -s RezvanMesh
 ```
 
-### First Launch
+---
 
-1. **Onboarding Flow:**
-   - Welcome screen explains offline mesh capability
-   - Tap "Create Identity" → app generates a 32-byte `SecureRandom` seed and derives an Ed25519/X25519 keypair from it
-   - Seed is saved to Keystore-backed encrypted storage (no mnemonic/backup phrase is shown — there is currently no way to recover an identity if the app's storage is lost; see Known Issues)
-   - Land in Status screen (scanning for neighbors)
+## Testing
 
-2. **Verify Installation:**
-   - Status screen shows "Node ID: RV-XXXXXXXX"
-   - "Listening for devices…" indicates BLE scanning active
-   - Battery level, RSSI, radio stats visible
+### Rust
+
+Run the complete workspace:
+
+```bash
+cd rust
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Individual crates:
+
+```bash
+cargo test -p rezvan-common
+cargo test -p rezvan-crypto
+cargo test -p rezvan-core
+```
+
+### Android JVM tests
+
+```bash
+./gradlew :android:app:testDebugUnitTest
+```
+
+### Debug build
+
+```bash
+./gradlew :android:app:assembleDebug
+```
+
+### Known-answer crypto vectors
+
+```bash
+python3 scripts/generate_known_answer_vectors.py
+```
+
+### Integration tests
+
+The integration test suite drives Android devices/emulators through ADB. It is **not** a pure software protocol simulator.
+
+Available cases:
+
+```
+integration-tests/test_cases/test_2node_message.py
+integration-tests/test_cases/test_5node_routing.py
+integration-tests/test_cases/test_emergency_broadcast.py
+```
+
+The runner is:
+
+```bash
+python3 scripts/run_integration_test.py
+```
+
+For physical radio validation, provide the required devices explicitly and use an APK/package configuration appropriate to the installed variant.
+
+Do not treat an emulator-only run as equivalent to physical BLE RF validation.
 
 ---
 
-## Usage Guide
+## CI
 
-### Messaging
+The GitHub Actions workflow is in:
 
-1. **Text Message:**
-   - Status → "New Message" button → select contact (or enter Node ID) → type text → Send
-   - Message encrypted with Signal Protocol, routed via mesh
-   - Delivery confirmed in ChatDetailScreen (checkmark = received)
+```
+.github/workflows/ci.yml
+```
 
-2. **Voice Broadcast (Push-to-Talk):**
-   - Tap PTT tab → hold record button → speak up to 60 seconds
-   - Release to send
-   - Opus codec @ 16 kbps (~120 KB/min) automatically selected
-   - Reception toggle in Settings controls auto-play on receive
+The current pipeline contains three principal jobs:
 
-3. **Emergency Alert (SOS):**
-   - Tap SOS tab → select severity (1=Advisory, 5=Critical)
-   - Red button triggers emergency broadcast
-   - Floods through mesh with TTL=10, bypasses rate limiting
-   - All devices wake from Doze mode if severity ≥ 4
+### Rust verification
 
-### Contacts
+- format check
+- Clippy
+- workspace tests
 
-- **Add Contact:** Manual Node ID entry (e.g., "RV-A1B2C3D4")
-- **Verify Identity:** QR code of your own ID (share via screenshot/print)
-- **Scan QR:** Camera scan to add verified contact
-- **Persistent:** Contacts saved to contacts.txt (encrypted via EncryptedSharedPreferences)
+Formatting and Clippy are **blocking**.
 
-### Settings
+### Dependency advisory scan
 
-- **Theme:** Light/Dark mode toggle
-- **Language:** English/Farsi runtime switch
-- **Power Profile:** Override auto-computed state (Emergency/Active/Balanced/PowerSaver/Minimal/Hibernation)
-- **Voice Retention:** Log storage (0/1/6/12/24 hours)
-- **Storage:** Clear all data (nuclear option)
-- **About:** Version, build info, crash dossier viewer
+Runs `cargo audit` against the Rust dependency graph.
 
-### Diagnostics
+A clean RustSec result is useful but does not constitute a complete security audit of the application.
 
-- **Status Screen:** Real-time mesh state, RSSI, packet counters, routing table
-- **Diagnostic Log:** Searchable text log with filters (type, severity)
-- **Export Log:** Share diagnostic snapshot via email/messaging
-- **Loopback Test:** Self-test harness for manual mesh verification
-- **Force Crash:** Intentional crash trigger for dossier generation
+### Android build
+
+- configures Java
+- installs Rust
+- installs `cargo-ndk`
+- locates the Android NDK
+- aligns NDK environment variables
+- builds Rust libraries for Android
+- runs Android JVM tests
+- assembles the debug APK
+- uploads the APK artifact
+
+The workflow also uses current Node-compatible GitHub Actions versions.
+
+### What CI does not currently do
+
+CI does not provide:
+
+- real BLE RF testing
+- multi-phone topology testing
+- OEM battery testing
+- physical Bluetooth disconnect/reconnect testing
+- production signing
+- long-running radio soak testing
 
 ---
 
-## Architecture Deep Dive
+## Physical Device Validation
 
-### Mesh Routing (BATMAN-Adv)
+The following campaign is the next major verification step.
 
-**OGM (Originator Message) Flooding:**
-- Every 5 seconds, each node broadcasts an OGM with routing table snapshot
-- OGM contains: timestamp, link quality to neighbors, cumulative path metric
-- Receivers update routing tables based on lowest metric (hop penalty + link quality)
+### Two devices
 
-**Path Metric Calculation:**
-```
-Metric = Σ(Hop_Penalty) + Route_Length_Penalty
+- onboarding
+- identity creation
+- BLE discovery
+- GATT connection
+- direct encrypted message A → B
+- direct encrypted message B → A
+- fragmented message
+- reconnect
+- process death
+- state restoration
 
-Hop_Penalty = (1000 × (256 / LQ)²) × Battery_Weight
-Battery_Weight = 1.0 (battery > 50%), 1.5 (20%-50%), 2.5 (<20%)
+### Three devices
 
-Link_Quality = RSSI → Quality mapping:
-  RSSI > -65 dBm  → 255 (excellent)
-  RSSI < -85 dBm  → 0 (unreliable)
-  -85 to -65 dBm  → interpolated
-```
-
-**Routing Table:**
-- Up to 3 routes per destination (primary, backup, experimental)
-- Best route = lowest metric
-- Converges within 10-30 seconds in stable topology
-
-### Encryption
-
-**Identity Generation:**
-```rust
-Seed = SecureRandom(32 bytes)   // generated on-device in Kotlin, NOT derived from
-                                 // any hardware identifier (MAC address, etc.)
-Public_Ed25519 = crypto_sign_ed25519_seed_keypair(seed)          // raw seed, libsodium's own API
-Private_X25519 = clamp(HKDF-SHA256(seed, info="rezvan-x25519-identity-v1"))  // domain-separated, not the raw seed
-Public_X25519  = crypto_scalarmult_curve25519_base(Private_X25519)
-Node_ID = SHA-256(Public_Ed25519)[0:8]
-```
-The seed itself is stored only inside Android Keystore-backed `EncryptedSharedPreferences` (see `IdentityBackupHelper.kt`); there is no plaintext fallback path.
-
-**Unicast (Point-to-Point):**
-- Session/ratchet state is handled by [`vodozemac`](https://github.com/matrix-org/vodozemac) (audited Rust Olm/Megolm implementation), not a hand-rolled Double Ratchet
-- X3DH-style key exchange with signed prekeys + one-time prekeys, Double Ratchet forward secrecy (Root Key → Chain Keys → Message Keys) — all inside `vodozemac`
-- Per-message AEAD as implemented by `vodozemac`'s Olm message format
-
-**Group/Broadcast (sender keys):**
-- Shared 32-byte symmetric key per channel, encrypted with XChaCha20-Poly1305 (24-byte nonce)
-- Each message is additionally signed with the sender's own Ed25519 mesh identity key, so receivers can verify *which* member actually sent it (not just that some channel member did) — see `rezvan-crypto/src/sender_key.rs`
-- **Wired to transport**: `MeshEngine::send_channel_message`/packet type 0x06 dispatches this over the same relay-capable path as other broadcast types (see `MeshEngine::process_incoming`'s relay section) — channels have a working send/receive path, unit-tested end to end (`engine::tests::test_channel_message_round_trip` and related)
-
-### Power Management
-
-**7 Power States:**
-
-| State | Scan Interval | Scan Window | Use Case | Battery Threshold |
-|-------|---------------|-------------|----------|-------------------|
-| Emergency | 1000 ms | 500 ms | Crisis response | Any (user override) |
-| Active | 1000 ms | 250 ms | High performance | > 80% |
-| Balanced | 5000 ms | 250 ms | Recommended default | 51-80% |
-| PowerSaver | 30000 ms | 100 ms | Extended operation | 31-50% |
-| Minimal | 120000 ms | 50 ms | Survival mode | 16-30% |
-| Hibernation | (off) | (off) | Radio sleeps | 6-15% |
-| Dead | N/A | N/A | App non-functional | < 5% |
-
-**Adaptive Scan Interval:**
-- Rust engine computes state based on battery level + charging status
-- Kotlin RadioService applies scan params via `BluetoothLeScanner.startScan(ScanSettings)`
-- Duty cycle reduces power drain from ~5% per hour (Active) to <0.5% (Hibernation)
-
-### BLE Advertisement Format (31 Bytes Exact)
+Force:
 
 ```
-Offset │ Size │ Field              │ Value
-───────┼──────┼────────────────────┼──────────────────────
-0-1    │ 2B   │ Protocol ID        │ 0x52 0x56 ("RV")
-2-9    │ 8B   │ Node ID Hash       │ SHA-256(PubKey)[0:8]
-10     │ 1B   │ Flags              │ [V]oice [F]ile [R]elay [W]iFi
-11     │ 1B   │ Battery Level      │ 0-100 (255=charging)
-12-13  │ 2B   │ Sequence Number    │ LE counter (dup detection)
-14-17  │ 4B   │ Channel Mask       │ Bitmask (up to 32 channels)
-18-19  │ 2B   │ Reserved           │ 0x0000
-20-30  │ 11B  │ Padding            │ 0x00...
-───────┴──────┴────────────────────┴──────────────────────
+A ↔ B ↔ C
 ```
+
+and verify:
+
+```
+A → C
+```
+
+must traverse B.
+
+### Five devices
+
+Force:
+
+```
+A ↔ B ↔ C ↔ D ↔ E
+```
+
+and measure:
+
+- route convergence
+- hop count
+- delivery latency
+- duplicate rate
+- packet loss
+- behavior after removing a relay
+
+### Lifecycle
+
+Test:
+
+- screen off
+- app backgrounded
+- Doze
+- battery saver
+- Bluetooth disabled/enabled
+- service restart
+- process kill
+- device reboot
+- database upgrade
+
+### Soak
+
+Run several devices for an extended period while generating normal and emergency traffic and record:
+
+- memory
+- CPU
+- battery
+- packet loss
+- reconnect frequency
+- route convergence
+- crashes
+- ANRs
+- database failures
 
 ---
 
-## Security Considerations
-
-### Threat Model
-
-| Threat | Capability | Mitigation |
-|--------|-----------|-----------|
-| **Eavesdropping** | Passive RF sniffing | XChaCha20-Poly1305 AEAD encryption, forward secrecy |
-| **Spoofing** | Forge packets | Ed25519 signatures, invalid sigs dropped |
-| **Replay** | Reuse old messages | Sequence numbers, timestamps in OGMs |
-| **Jamming** | Disrupt BLE/WiFi | Frequency hopping (channels 37/38/39), adaptive scan |
-| **Device Seizure** | Physical compromise | SQLCipher at rest (key in Android Keystore), PIN/password protection |
-| **Identity Loss** | Lost/wiped device | **Unmitigated today** — no backup/recovery mechanism exists; losing the device or clearing app data permanently loses the identity |
-
-### No Backdoors
-
-- ✅ All code open-source (AGPL v3)
-- ✅ Cryptography via libsodium (through the `sodiumoxide` Rust binding) and `vodozemac` (audited Olm/Megolm), not custom crypto primitives
-- ⚠️ `sodiumoxide` itself is an unmaintained Rust crate; a scoped migration plan to `libsodium-sys-stable` exists (`rust/SODIUMOXIDE_MIGRATION.md`) but has not been applied
-- ✅ No telemetry, analytics, or crash reporting to external services
-- ✅ No phoning home, no implicit network calls in application code (note: `INTERNET` is currently declared in `AndroidManifest.xml`; no corresponding network call was found in the Kotlin source — origin/purpose not yet confirmed)
-- ✅ Zero embedded accounts, no hardcoded keys
-
----
-
-## Development Workflow
-
-### Project Structure
+## Project Structure
 
 ```
 RezvanMesh/
 ├── android/
-│   ├── app/
-│   │   ├── src/main/
-│   │   │   ├── java/com/rezvani/mesh/
-│   │   │   │   ├── MainActivity.kt
-│   │   │   │   ├── MeshCore.kt              # JNI wrapper
-│   │   │   │   ├── MeshServiceConnection.kt
-│   │   │   │   ├── radio/
-│   │   │   │   │   ├── RezvanRadioService.kt
-│   │   │   │   │   ├── RadioController.kt
-│   │   │   │   │   └── ActionDispatcher.kt
-│   │   │   │   ├── ui/
-│   │   │   │   │   ├── screens/
-│   │   │   │   │   ├── components/
-│   │   │   │   │   └── theme/
-│   │   │   │   ├── data/
-│   │   │   │   │   ├── AppDatabase.kt       # SQLCipher
-│   │   │   │   │   ├── dao/
-│   │   │   │   │   └── entities/
-│   │   │   │   └── utils/
-│   │   │   └── res/
-│   │   │       ├── values/strings.xml
-│   │   │       └── values-fa/strings.xml
-│   │   └── build.gradle.kts
-│   └── build.gradle.kts
+│   └── app/
+│       └── src/main/
+│           ├── java/com/rezvani/mesh/
+│           │   ├── MainActivity.kt
+│           │   ├── MeshCore.kt
+│           │   ├── MeshServiceConnection.kt
+│           │   ├── radio/
+│           │   │   ├── RezvanRadioService.kt
+│           │   │   ├── RadioControllerImpl.kt
+│           │   │   ├── BlePacketSender.kt
+│           │   │   ├── BleFragmenter.kt
+│           │   │   ├── WifiPacketSender.kt
+│           │   │   └── ActionDispatcher.kt
+│           │   ├── data/
+│           │   │   ├── AppDatabase.kt
+│           │   │   ├── dao/
+│           │   │   └── entities/
+│           │   └── ui/
+│           └── res/
 ├── rust/
-│   ├── Cargo.toml                    # Workspace
-│   ├── SODIUMOXIDE_MIGRATION.md      # scoped, not-yet-applied dependency migration plan
+│   ├── Cargo.toml
 │   ├── rezvan-common/
-│   │   ├── Cargo.toml
-│   │   └── src/lib.rs
 │   ├── rezvan-crypto/
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── identity.rs
-│   │       ├── sign.rs
-│   │       ├── sender_key.rs         # group/channel encryption; wired to transport via
-│   │       │                         # MeshEngine::send_channel_message (packet type 0x06),
-│   │       │                         # now relay-capable (see routing.rs / engine.rs relay docs)
-│   │       ├── hkdf.rs
-│   │       ├── beacon_mac.rs
-│   │       └── epoch_key.rs          # network-wide beacon authentication
 │   └── rezvan-core/
-│       ├── Cargo.toml
-│       └── src/
-│           ├── lib.rs                # JNI entry points
-│           ├── engine.rs
-│           ├── routing.rs
-│           ├── session.rs            # vodozemac-backed 1:1 session management
-│           ├── action.rs
-│           ├── crypto.rs
-│           └── power.rs
 ├── integration-tests/
-│   ├── mesh_simulator.py
-│   └── test_cases/
-│       ├── test_2node_message.py
-│       ├── test_5node_routing.py
-│       └── test_emergency_broadcast.py
 ├── scripts/
-│   ├── build_rust.sh
-│   ├── verify_interfaces.py
-│   └── sign_apk.sh
+├── docs/
 ├── .github/workflows/
-│   └── ci.yml
 └── README.md
 ```
 
-Note: no `Cargo.lock` is currently committed to the repository, so exact dependency versions (including `vodozemac` and `sodiumoxide`) are not pinned across builds.
+### Documentation
 
-### Build Pipeline
+| Document | Purpose |
+|---|---|
+| [README.md](README.md) | Current project overview, build, architecture, testing, limitations |
+| [docs/TECHNICAL_VERIFICATION.md](docs/TECHNICAL_VERIFICATION.md) | Current engineering verification boundary and release posture |
+| [docs/CRYPTOGRAPHY.md](docs/CRYPTOGRAPHY.md) | Current cryptographic architecture and verification |
+| [docs/PRODUCT_AND_VALIDATION_STATUS.md](docs/PRODUCT_AND_VALIDATION_STATUS.md) | Current feature completeness and validation status |
+| [docs/GATE1_MESSAGE_ID_SIGNED_ACK_PROTOCOL.md](docs/GATE1_MESSAGE_ID_SIGNED_ACK_PROTOCOL.md) | Message-ID and signed acknowledgement protocol |
 
-**Local Development:**
-```bash
-# 1. Compile Rust core + crypto
-./scripts/build_rust.sh
-
-# 2. Verify JNI interface consistency
-python3 scripts/verify_interfaces.py
-
-# 3. Build debug APK
-./gradlew assembleDebug
-
-# 4. Install on device
-adb install -r app-debug.apk
-
-# 5. Run integration tests (requires 2+ ADB-attached devices or emulators --
-#    despite the "simulator" naming, mesh_simulator.py drives real hardware
-#    via `adb devices`/install/logcat, it does not simulate the protocol in
-#    pure software; NOT currently run in CI for that reason)
-python3 scripts/run_integration_test.py
-# or individually:
-python3 integration-tests/test_cases/test_2node_message.py
-python3 integration-tests/test_cases/test_5node_routing.py
-python3 integration-tests/test_cases/test_emergency_broadcast.py
-
-# 6. For on-device log verification instead/in addition:
-adb logcat -s RezvanMesh | grep -E "GATT|MESSAGE|ROUTE"
-```
-
-**CI/CD (GitHub Actions):** see `.github/workflows/ci.yml`
-```yaml
-# Trigger: push to main, PR, manual dispatch
-# Four independent jobs:
-#   1. rust-test    — cargo fmt --check (non-blocking), cargo clippy (non-blocking),
-#                      Cargo.lock freshness check (blocking), then
-#                      cargo test for rezvan-common, rezvan-crypto, AND rezvan-core
-#   2. rust-audit    — cargo audit against the RustSec advisory database (non-blocking;
-#                       relevant given sodiumoxide's unmaintained status, see
-#                       rust/SODIUMOXIDE_MIGRATION.md)
-#   3. android-build — depends on rust-test passing; cross-compiles the Rust core
-#                       (arm64-v8a + armeabi-v7a) via cargo-ndk, then ./gradlew assembleDebug,
-#                       then uploads the debug APK as a workflow artifact
-#   (integration-tests/ is intentionally NOT a CI job -- it drives real
-#   ADB-attached devices/emulators, not a pure-software simulator; see the
-#   comment block in ci.yml for the infrastructure tradeoff that would be
-#   needed to change that)
-#
-# Not currently present in CI: scripts/verify_interfaces.py, release signing,
-# or delivery to any messaging bot. fmt and clippy are non-blocking
-# (continue-on-error) until the pre-existing warning/formatting baseline is
-# cleaned up -- see the inline comments in ci.yml for exactly why each step
-# is or isn't blocking.
-```
-
-### Testing Strategy
-
-**Unit Tests (Rust):**
-```bash
-cargo test -p rezvan-common    # wire format; run in CI on every push/PR
-cargo test -p rezvan-crypto    # cryptographic primitives; run in CI on every push/PR
-cargo test -p rezvan-core      # routing, relay, sessions, power state; run in CI on every push/PR
-```
-
-**Integration Tests (see `integration-tests/`) — require 2+ ADB-attached devices or emulators, NOT run in CI:**
-- [x] `test_2node_message.py` – 2-node message delivery, via `mesh_simulator.py` driving real/emulated hardware over ADB
-- [x] `test_5node_routing.py` – multi-hop routing across 5 real/emulated nodes
-- [x] `test_emergency_broadcast.py` – SOS/emergency flooding behavior
-- [ ] Real 2-device GATT delivery (physical hardware) — still pending, see Known Issues
-- [ ] Voice broadcast playback on a real receiver — still pending, see Known Issues
-- [ ] Power state transitions with real battery simulation on-device
-
-**Diagnostics:**
-- Real-time Status screen (mesh state, radio stats)
-- Exportable diagnostic log (tap "Export" → Share)
-- Crash dossier (rezvan-crash-TIMESTAMP.txt in Downloads)
+Historical remediation reports are intentionally not retained as current project documentation.
 
 ---
 
-## Known Issues & Limitations
+## Development Rules
 
-### Critical Path (v1.0 Beta)
-
-| Issue | Severity | Status | ETA |
-|-------|----------|--------|-----|
-| GATT message delivery (2 devices) | HIGH | Under test | This week |
-| Voice playback on receiver | HIGH | Implementation pending | This week |
-| 3+ device mesh stability | MEDIUM | Validation pending | This week |
-| No identity backup/recovery | HIGH | Not implemented — no mnemonic, no export path exists | Unscheduled |
-| ~~No `Cargo.lock` committed~~ | ~~MEDIUM~~ | **Fixed**: `Cargo.lock` is now committed and CI's `rust-test` job fails the build if it's out of date relative to `Cargo.toml` | Done |
-| `sodiumoxide` dependency unmaintained upstream | LOW-MEDIUM | Migration plan documented in `rust/SODIUMOXIDE_MIGRATION.md`, not yet applied. CI's `rust-audit` job now runs `cargo audit` on every push/PR (non-blocking) so a real advisory against it would actually surface instead of relying on someone checking manually | Unscheduled (monitored) |
-
-### Deferred to v1.1
-
-- **WiFi Direct Transport (relay-capable)** – Basic transport (group formation, server socket, client send/receive) is implemented; relaying mesh packets over this transport (vs. BLE) is not, and is the actual remaining gap for v1.1
-- **Channel/Group Messaging** – Wired end-to-end: UI/DB scaffolding, sender-key encryption, and transport dispatch (packet type 0x06, relay-capable) all work; see `MeshEngine::send_channel_message`
-- **File Transfer** – Design exists, not implemented
-- **Satellite Mode (LoRa)** – Out of scope; BLE-only for now
-
-### Platform Limitations
-
-- **Min SDK 26** (Android 8.0) – Earlier versions lack required BLE APIs
-- **BLE Range** – ~100 meters outdoor LoS, ~10-20 meters indoors
-- **Jamming Resistance** – Frequency hopping helps, but determined attacker with wideband jammer can disrupt
-- **No Self-Destruct** – Messages don't auto-delete; encryption at rest is primary protection
+1. Do not describe a feature as implemented if the runtime path is disabled or incomplete.
+2. Do not treat a successful local queue/write as proof of remote delivery.
+3. Do not treat host/unit tests as proof of BLE hardware behavior.
+4. Security-sensitive changes require tests and explicit protocol review.
+5. Keep identity, session, channel, and transport addresses conceptually separate.
+6. Prefer fail-closed behavior for unsupported security-sensitive features.
+7. Update documentation in the same change when architecture or feature state changes.
+8. Keep CI gates truthful: blocking checks must actually fail the build.
 
 ---
 
-## Performance Targets (Spec vs. Current)
+## Known Limitations
 
-| Metric | Target | Current | Status |
-|--------|--------|---------|--------|
-| 1-hop text delivery | <500 ms | TBD | Pending 2-device test |
-| 5-hop delivery | <3 seconds | TBD | Pending 3-device test |
-| Voice latency | <300 ms | TBD | Pending voice RX impl |
-| Active mesh nodes | 50-100 | TBD | Pending 3+ device test |
-| Battery drain (Balanced) | <5% per hour | ~3-4%/hr | Good, under budget |
-| RAM usage | <150 MB | ~80-120 MB | Good |
-| APK size | <20 MB | ~18 MB | ✅ Hit target |
+### Radio
 
----
+BLE reliability is affected by Android Bluetooth stacks, OEM firmware, radio interference, device placement, and power-management policies.
 
-## Deployment & Distribution
+### Background execution
 
-### Offline Distribution (No App Store)
+Android and OEMs may restrict background activity. A mesh application cannot guarantee identical behavior across every vendor without device-specific validation.
 
-1. **Initial Seed:**
-   - APK hosted on USB drives, local NAS, or pre-installed on community devices
+### Jamming
 
-2. **Peer-to-Peer Sideload:**
-   - Within app: Settings → "Share App"
-   - Creates WiFi Direct hotspot or BLE transfer of APK to nearby device
-   - Receiver prompted to enable "Install Unknown Apps" permission
+BLE frequency hopping and adaptive scanning can improve resilience but cannot guarantee communication against a capable RF jammer.
 
-3. **Integrity Verification:**
-   - SHA-256 hash of APK published on trusted out-of-band channels (radio, posters, SMS)
-   - User can verify hash in Settings before install
+### Identity recovery
 
-### APK Signing
+There is currently no identity backup/recovery mechanism.
 
-```bash
-# Generate keystore (one-time)
-keytool -genkey -v -keystore rezvan.keystore -keyalg RSA -keysize 2048 -validity 10000
+### Voice
 
-# Sign release APK
-./scripts/sign_apk.sh android/app/build/outputs/apk/release/app-release.apk \
-  -keystore rezvan.keystore \
-  -storepass "$KEYSTORE_PASSWORD" \
-  -alias rezvan_key \
-  -keypass "$KEY_PASSWORD"
+Voice is intentionally disabled pending completion of the authenticated end-to-end transport and receiver path.
 
-# Verify signature
-jarsigner -verify -verbose rezvan.apk
-```
+### Wi-Fi Direct
 
----
+Wi-Fi Direct is not yet an independent multi-hop mesh transport.
 
-## Contributing
+### Traffic analysis
 
-### Code of Conduct
-
-- **Security first** – Crypto bugs are life-threatening in this context
-- **Simplicity over cleverness** – Maintainability is critical for long-term audits
-- **Privacy by default** – No telemetry, no external calls, no shortcuts
-- **Respect for users** – iranians relying on this during blackouts; failures = isolation
-
-### Contributing Guidelines
-
-1. **Fork & branch:** `git checkout -b fix/gatt-timeout`
-2. **Test locally:** Build APK, test on Samsung A23 + one other device
-3. **Lint & format:** `cargo fmt`, `ktlint`, Android Studio inspector
-4. **PR with test report:** Attach diagnostic log (Settings → Export Diagnostics)
-5. **Code review:** Two approvals before merge (one Kotlin, one Rust)
-
-### Team Structure (Current)
-
-- **Team A (Core):** Rust mesh engine, routing, power logic
-- **Team B (Crypto):** libsodium integration, key exchange, Double Ratchet
-- **Team C (Radio):** BLE/WiFi Direct radio control, action dispatch
-- **Team D (UI):** Compose screens, SQLCipher, identity backup
-- **Team E (Build):** CI/CD, Gradle, cross-compilation, signing
-
----
-
-## Documentation
-
-As of this writing, the following are the actual documentation files present in the repository (the previous list here referenced files — `Manifest.txt`, `Handover_paper.txt`, `Team_*.txt`, `Appendix_*.txt`, `Debug_Appendix.html` — that do not exist in this repo and have been removed from this section):
-
-- **README.md** – This file
-- **rust/SODIUMOXIDE_MIGRATION.md** – Scoped plan for replacing the unmaintained `sodiumoxide` dependency (not yet applied)
-- Inline module-level doc comments in `rust/rezvan-crypto/src/*.rs` — several modules (`sender_key.rs`, `epoch_key.rs`, `identity.rs`) document specific security-audit findings and fixes directly above the relevant code
+Encryption protects message content but does not automatically hide radio metadata such as timing, packet volume, device presence, or RF activity.
 
 ---
 
 ## Roadmap
 
-### v1.0 (Beta, Target: June 2026)
-- ✅ Mesh routing (BATMAN-Adv)
-- ✅ Text messaging (encrypted)
-- ✅ Voice broadcast (Opus codec)
-- ✅ Emergency alerts (SOS)
-- ⏳ End-to-end testing (2+ device)
-- ⏳ Voice playback on receiver
-- 🔲 WiFi Direct transport
+### Current engineering phase
 
-### v1.1 (Production, Target: Q3 2026)
-- 🔲 Channel/group messaging
-- 🔲 File transfer (chunked, resumable)
-- 🔲 WiFi Direct integration
-- 🔲 Improved UI (Material 3 polish)
-- 🔲 Performance optimization (routing convergence)
+- [x] Rust core implementation
+- [x] Cryptographic implementation and known-answer testing
+- [x] BLE transport implementation
+- [x] Multi-hop routing implementation
+- [x] Encrypted local persistence
+- [x] Android JVM/CI verification
+- [ ] Physical two-device GATT validation
+- [ ] Controlled 3+ node routing validation
+- [ ] Lifecycle/background/OEM validation
+- [ ] Database migration validation on real installations
 
-### v2.0 (Long-term)
-- 🔲 LoRa/Satellite integration
-- 🔲 Desktop client (Linux/macOS relay)
-- 🔲 Peer reputation/sybil resistance
-- 🔲 Formal security audit
+### Next feature phase
+
+- [ ] Authenticated message delivery acknowledgements
+- [ ] Identity backup/recovery
+- [ ] Complete Wi-Fi Direct mesh relay
+- [ ] Complete authenticated voice transport
+- [ ] Voice receiver/playback
+- [ ] File transfer
+- [ ] Broader device compatibility matrix
+
+### Longer term
+
+- [ ] Formal independent security audit
+- [ ] More extensive RF resilience testing
+- [ ] Additional transport technologies if justified by the product requirements
+
+Roadmap items are deliberately not assigned dates until the physical validation baseline is established.
 
 ---
 
 ## License
 
-**AGPL v3** – This project is free and open-source software. Any derivative works must also be open-source and give credit to original authors.
+RezvanMesh is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 
-**Why AGPL?** To ensure that anyone using Rezvan Mesh infrastructure (including centralized relay servers if ever deployed) must share improvements back to the community.
-
----
-
-## Support & Contact
-
-- **Issues:** GitHub Issues (public, searchable)
-- **Security Concerns:** Email security review (contact maintainer privately)
-- **Farsi Support:** Questions in Farsi welcome
-- **Offline Help:** Build diagnostic log (Settings → Export), attach to issue
-
----
-
-## Acknowledgments
-
-- **libsodium authors** – Cryptographic foundation
-- **Signal Protocol team** – Double Ratchet specification
-- **BATMAN-Adv maintainers** – Routing protocol inspiration
-- **Android community** – Jetpack Compose, Room, BLE best practices
-- **Iranian open-source contributors** – Language support, testing feedback
+See the repository license file for the complete terms.
 
 ---
 
 ## Disclaimer
 
-**Use at your own risk.** While Rezvan Mesh is designed with security and privacy in mind, no software is perfect. The developers assume no liability for misuse, data loss, or communication failures. Always have a backup communication plan. Encryption is strong, but determined adversaries with physical access to devices or wideband jamming capability may still disrupt the network.
+RezvanMesh is experimental communication software. No wireless system can guarantee delivery, availability, privacy against a compromised device, or resistance to a capable jammer.
 
-For Iranian users during internet shutdown
+Do not rely on RezvanMesh as your only emergency communication method until the physical-device and production validation program has been completed.
