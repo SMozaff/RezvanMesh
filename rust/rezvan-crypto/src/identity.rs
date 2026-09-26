@@ -195,4 +195,101 @@ mod tests {
         assert_eq!(copy.private_ed25519, original.private_ed25519);
         assert_eq!(copy.private_x25519, original.private_x25519);
     }
+
+    // --- known-answer tests -------------------------------------------------
+    //
+    // Everything else in this module is a round-trip, which would pass just as
+    // happily if the derivation were changed *consistently* -- and a consistent
+    // change here silently gives every device a different NodeId and
+    // invalidates every peer relationship, with no test failing.
+    //
+    // These constants were produced by an implementation that shares no code
+    // with this one: Ed25519 and X25519 via OpenSSL (the `cryptography`
+    // package), HKDF via Python's stdlib `hmac`/`hashlib`. Reproduce with
+    // `scripts/generate_known_answer_vectors.py`. They are also transitively
+    // confirmed by the relevant RFCs' own vectors, which the same script
+    // spot-checks.
+    //
+    // A failure here means the derivation changed. That is never acceptable
+    // for a released build, because NodeIds are derived from the Ed25519 public
+    // key and every persisted key bundle and channel key is tied to it.
+
+    const SEED_A: [u8; 32] = [
+        0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+        0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+        0x07,
+    ];
+    const SEED_A_PUBLIC_ED25519: &str =
+        "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c";
+    const SEED_A_PRIVATE_X25519: &str =
+        "786085b24b88f4b8a93c4d680451f3402b2d2e7d01bb340e1ad1aae0a1f5f675";
+    const SEED_A_PUBLIC_X25519: &str =
+        "cb28de1d78e7e8ea2205c6bf4ae05f62df5d4a7aed025ddf8b51f9a294252f10";
+
+    const SEED_B: [u8; 32] = [
+        0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a,
+        0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a, 0x2a,
+        0x2a,
+    ];
+    const SEED_B_PUBLIC_ED25519: &str =
+        "197f6b23e16c8532c6abc838facd5ea789be0c76b2920334039bfa8b3d368d61";
+    const SEED_B_PRIVATE_X25519: &str =
+        "2859e8d1940e74b636597e970aed7a4dc99c6e1adf1a9065a363366b119dbb61";
+    const SEED_B_PUBLIC_X25519: &str =
+        "ddecfae3328923fb92679f950624043988074ddbed94f31f5d9e6a514cf59171";
+
+    fn assert_identity_matches_vector(
+        seed: &[u8; 32],
+        public_ed25519: &str,
+        private_x25519: &str,
+        public_x25519: &str,
+    ) {
+        let identity = generate_identity(seed);
+        assert_eq!(
+            identity.public_ed25519,
+            crate::test_util::hex_array::<32>(public_ed25519),
+            "Ed25519 public key for this seed changed -- NodeId and all stored key \
+             material are derived from it"
+        );
+        assert_eq!(
+            identity.private_x25519,
+            crate::test_util::hex_array::<32>(private_x25519),
+            "X25519 private key derivation changed"
+        );
+        assert_eq!(
+            identity.public_x25519,
+            crate::test_util::hex_array::<32>(public_x25519),
+            "X25519 public key derivation changed"
+        );
+        assert_eq!(
+            &identity.private_ed25519[..32],
+            seed,
+            "the seed must be the leading half of the 64-byte secret key"
+        );
+        assert_eq!(
+            &identity.private_ed25519[32..],
+            &identity.public_ed25519,
+            "the public key must be the trailing half of the 64-byte secret key"
+        );
+    }
+
+    #[test]
+    fn known_answer_identity_seed_a() {
+        assert_identity_matches_vector(
+            &SEED_A,
+            SEED_A_PUBLIC_ED25519,
+            SEED_A_PRIVATE_X25519,
+            SEED_A_PUBLIC_X25519,
+        );
+    }
+
+    #[test]
+    fn known_answer_identity_seed_b() {
+        assert_identity_matches_vector(
+            &SEED_B,
+            SEED_B_PUBLIC_ED25519,
+            SEED_B_PRIVATE_X25519,
+            SEED_B_PUBLIC_X25519,
+        );
+    }
 }

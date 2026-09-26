@@ -127,6 +127,24 @@ The tests:
 - `IdentityKeypair` now zeroizes key material on drop, with tests for the wipe
   and for clone independence.
 
+**The circularity in round-trip tests is now broken.** Every derivation the
+migration touched is also pinned as a known-answer test against an
+implementation that shares no code with the Rust one — OpenSSL (via Python's
+`cryptography`) for Ed25519/X25519, stdlib `hmac` for HKDF/HMAC, and
+`draft-arciszewski-xchacha-03` A.1 for the AEAD, which has no OpenSSL
+equivalent. `scripts/generate_known_answer_vectors.py` regenerates every
+constant and spot-checks three RFC vectors first, so the generator is itself
+anchored.
+
+This is the gap that made the top residual risk tractable: a round-trip suite
+proves only self-consistency, and would have passed happily through a
+*consistent* change to the identity derivation. Since `NodeId` is
+`SHA-256(Ed25519 public key)[0..8]`, such a change would give every device a
+different identity and orphan every stored key bundle and channel key — with a
+green test suite. Six known-answer tests now cover identity (two seeds), the
+beacon MAC, the epoch tag and ratchet, and the on-disk state key, plus the
+XChaCha20 spec vector.
+
 **Residual risk:** the suite proves spec conformance and self-consistency on the
 host target. It does not prove interoperability with a peer on the previous
 build. A two-node test (old build ↔ new build) over a Gate 1 direct message and a

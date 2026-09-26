@@ -6,6 +6,10 @@ pub mod beacon_mac;
 pub mod epoch_key;
 pub mod secure_store;
 
+/// Test-only helpers. Not compiled into release builds.
+#[cfg(test)]
+pub(crate) mod test_util;
+
 pub use identity::IdentityKeypair;
 
 // NOTE: the hand-rolled Double Ratchet SessionState that used to live here

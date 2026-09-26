@@ -214,4 +214,44 @@ mod tests {
         let tag = compute_tag(&key, b"original");
         assert!(!verify_tag(&key, b"tampered!", &tag));
     }
+
+    // --- known-answer tests --------------------------------------------------
+    //
+    // Round-trips would survive a consistent change to the epoch ratchet, which
+    // matters because the epoch key is the network-wide beacon authenticator:
+    // if two devices derived different ratchets, every beacon would be treated
+    // as forged. Constants from an independent implementation -- see
+    // `scripts/generate_known_answer_vectors.py`.
+    #[test]
+    fn known_answer_epoch_tag() {
+        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+        const EPOCH_2: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+        const EXPECTED_1: &str = "a9cc1a2ebe2bfc";
+        const EXPECTED_2: &str = "2a018ea9dd55ae";
+        let message = b"beacon-payload";
+
+        assert_eq!(
+            compute_tag(&crate::test_util::hex_array::<32>(EPOCH_1), message).to_vec(),
+            crate::test_util::hex(EXPECTED_1)
+        );
+        assert_eq!(
+            compute_tag(&crate::test_util::hex_array::<32>(EPOCH_2), message).to_vec(),
+            crate::test_util::hex(EXPECTED_2)
+        );
+    }
+
+    #[test]
+    fn known_answer_epoch_ratchet_step() {
+        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+        const NEXT: &str = "466346638930a5f7ee0cc43c82f334e395229040fd7f34bd886f959af1a4987d";
+        const NEXT2: &str = "c885a6683bead167fb3487e3f3465794448d40680cadec2658caa1cce4d64059";
+
+        let first = ratchet_forward(&crate::test_util::hex_array::<32>(EPOCH_1));
+        assert_eq!(first.to_vec(), crate::test_util::hex(NEXT), "ratchet step 1 changed");
+        assert_eq!(
+            ratchet_forward(&first).to_vec(),
+            crate::test_util::hex(NEXT2),
+            "ratchet step 2 changed"
+        );
+    }
 }

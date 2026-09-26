@@ -168,4 +168,29 @@ mod tests {
         let tag = compute_tag(&alice.private_x25519, &bob.public_x25519, b"original");
         assert!(!verify_tag(&bob.private_x25519, &alice.public_x25519, b"tampered!", &tag));
     }
+
+    // --- known-answer test ---------------------------------------------------
+    //
+    // A round-trip here would pass even if the whole derivation changed
+    // consistently, which would leave two devices unable to authenticate each
+    // other's beacons with no test failing. These constants come from an
+    // independent implementation (OpenSSL X25519 + stdlib HMAC) -- see
+    // `scripts/generate_known_answer_vectors.py`.
+    #[test]
+    fn known_answer_beacon_mac_tag() {
+        const A_PRIVATE: &str = "c0412d67179c5095ba87f8f73ad0f66e831cacf8dd4b960161841dfe03f33f59";
+        const B_PUBLIC: &str = "286b97fb1c25462e3aeda0d0944f35345e34591b6e5cd2f4b5e69aeaaa3fa06a";
+        const EXPECTED_TAG: &str = "d8b621e9bf8594";
+
+        let a_private = crate::test_util::hex_array::<32>(A_PRIVATE);
+        let b_public = crate::test_util::hex_array::<32>(B_PUBLIC);
+        let message = b"beacon-payload";
+
+        assert_eq!(
+            compute_tag(&a_private, &b_public, message).to_vec(),
+            crate::test_util::hex(EXPECTED_TAG),
+            "beacon MAC derivation changed; peers would stop authenticating each other"
+        );
+        assert!(verify_tag(&a_private, &b_public, message, &crate::test_util::hex_array::<7>(EXPECTED_TAG)));
+    }
 }

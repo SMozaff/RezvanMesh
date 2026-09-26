@@ -178,13 +178,45 @@ So: for a pinned-version migration, the lock file and vendored source are the
 authority, and external docs are a useful second opinion that has to be
 reconciled against them rather than followed.
 
+### Independent cross-verification (known-answer tests)
+
+The concern with a round-trip test suite is that it proves *self-consistency*:
+if a derivation were changed consistently across the codebase, every test would
+still pass while the protocol had silently changed. So the derivations this
+migration touches are also pinned against implementations that share no code
+with the Rust one:
+
+| Derivation | Independent reference |
+|---|---|
+| Ed25519 keygen + signing | RFC 8032 §7.1 vectors, and OpenSSL |
+| X25519 key agreement | RFC 7748 §5.2 vector, and OpenSSL |
+| HKDF-SHA256 | RFC 5869 test case 1, and Python stdlib `hmac` |
+| Identity derivation (both halves) | OpenSSL + stdlib, via `scripts/generate_known_answer_vectors.py` |
+| Beacon MAC tag | OpenSSL X25519 + stdlib HMAC |
+| Beacon epoch tag and ratchet | stdlib HMAC |
+| On-disk state key | stdlib HMAC |
+| XChaCha20-Poly1305 | `draft-arciszewski-xchacha-03` A.1 (no OpenSSL equivalent — the 24-byte nonce is XChaCha-specific) |
+
+`scripts/generate_known_answer_vectors.py` regenerates every constant from
+Python's `cryptography` (OpenSSL) and stdlib, and spot-checks the three RFC
+vectors first so the generator itself is anchored. If a pinned Rust constant
+and the generator ever disagree, one of the two is now non-conformant -- find
+out which before changing either.
+
+Concretely, the identity known-answer tests matter most: `NodeId` is
+`SHA-256(Ed25519 public key)[0..8]`, so a silent change to that derivation would
+give every device a different identity and orphan every stored key bundle and
+channel key, with no round-trip test failing.
+
 ### Residual risk
 
-The unit suite proves self-consistency and spec conformance on the host target.
-It does **not** prove interoperability with a peer running the previous
-implementation. A two-node test (old build ↔ new build) covering a Gate 1
-direct message and a channel message is the one thing still worth doing, and it
-needs two devices or the integration harness.
+The unit suite now proves spec conformance *and* agreement with an independent
+implementation, on the host target. It still does **not** prove
+interoperability with a peer running a *released* build — the constants above
+establish that the derivation is unchanged from the specification, but not that
+some earlier build of this app produced them. A two-node test (old build ↔ new
+build) covering a Gate 1 direct message and a channel message remains worthwhile
+and needs two devices or the integration harness.
 
 ## If a C library ever comes back
 
