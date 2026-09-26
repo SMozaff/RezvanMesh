@@ -38,9 +38,6 @@
 -keep class javax.annotation.concurrent.** { *; }
 -dontwarn javax.annotation.concurrent.**
 
-# Keep libsodium
--keep class org.libsodium.** { *; }
-
 # Keep BLE classes
 -keep class android.bluetooth.** { *; }
 -keep class android.bluetooth.le.** { *; }
