@@ -721,7 +721,6 @@ mod registry_tests {
         let mut handles = Vec::new();
         for _ in 0..8 {
             handles.push(std::thread::spawn({
-                let handle = handle;
                 let calls = Arc::clone(&calls);
                 move || {
                     for _ in 0..50 {
@@ -770,7 +769,6 @@ mod registry_tests {
         let handle = REGISTRY.insert(MeshEngine::new(&[6u8; 32], Box::new(SodiumCryptoProvider)));
 
         let worker = std::thread::spawn({
-            let handle = handle;
             move || {
                 for _ in 0..200 {
                     if with_engine(handle, |e| e.tick()).is_none() {
