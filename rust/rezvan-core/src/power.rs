@@ -63,19 +63,6 @@ pub fn should_enable_wifi(state: PowerState) -> bool {
     }
 }
 
-/// BLE scan interval and window (milliseconds) for the given power state.
-#[cfg(test)]
-pub fn get_scan_params(state: PowerState) -> (u32, u32) {
-    match state {
-        PowerState::Emergency => (1000, 500),
-        PowerState::Active => (1000, 250),
-        PowerState::Balanced => (5000, 250),
-        PowerState::PowerSaver => (30000, 100),
-        PowerState::Minimal => (120000, 50),
-        _ => (0, 0),
-    }
-}
-
 /// OGM broadcast interval (seconds) for the given power state.
 /// This is used by the routing table to throttle OGM flooding.
 pub fn get_ogm_interval_secs(state: PowerState) -> u64 {
