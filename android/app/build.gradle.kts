@@ -22,7 +22,9 @@ val gitBranch: String = providers.exec {
 }.standardOutput.asText.get().trim()
 
 android {
-    setProperty("archivesBaseName", "RezvanMesh")
+    base {
+        archivesName.set("RezvanMesh")
+    }
     namespace = "com.rezvani.mesh"
     compileSdk = 35
 
