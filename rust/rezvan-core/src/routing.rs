@@ -742,12 +742,6 @@ pub fn compute_hop_penalty(lq: u8, battery_weight: f32) -> u32 {
     (1000.0 * (256.0 / lq_f).powi(2) * battery_weight) as u32
 }
 
-/// Compute the route length penalty (discourages excessively long paths).
-#[cfg(test)]
-pub fn route_length_penalty(hop_count: u8) -> u32 {
-    100 * (hop_count.saturating_sub(1) as f32).powf(1.5) as u32
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
