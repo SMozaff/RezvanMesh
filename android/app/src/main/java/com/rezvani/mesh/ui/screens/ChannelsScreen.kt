@@ -294,7 +294,7 @@ fun ChannelListItem(
                 Spacer(modifier = Modifier.width(4.dp))
                 IconButton(onClick = onLeave) {
                     Icon(
-                        imageVector = Icons.Default.Logout,
+                        imageVector = Icons.AutoMirrored.Filled.Logout,
                         contentDescription = stringResource(R.string.leave_channel),
                         tint = MaterialTheme.colorScheme.error
                     )
