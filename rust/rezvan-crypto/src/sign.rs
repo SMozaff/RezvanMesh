@@ -1,5 +1,5 @@
 use crate::identity::IdentityKeypair;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 /// Produce a detached Ed25519 signature over `message`.
 ///
