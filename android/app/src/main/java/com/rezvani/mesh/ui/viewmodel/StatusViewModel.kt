@@ -30,6 +30,14 @@ data class PeerUiModel(
     val connected: Boolean
 )
 
+private data class StatusBaseState(
+    val count: Int,
+    val strength: String,
+    val connected: Boolean,
+    val battery: Int,
+    val charging: Boolean
+)
+
 class StatusViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(StatusUiState())
@@ -51,13 +59,15 @@ class StatusViewModel : ViewModel() {
                 MeshServiceConnection.isServiceConnected,
                 MeshServiceConnection.batteryLevel,
                 MeshServiceConnection.isCharging
-            ) { values -> values }
+            ) { count, strength, connected, battery, charging ->
+                StatusBaseState(count, strength, connected, battery, charging)
+            }
             combine(baseFlow, logFlow, _radioState, _peerState) { base, logs, radio, peers ->
-                val count     = base[0] as Int
-                val strength  = base[1] as String
-                val connected = base[2] as Boolean
-                val battery   = base[3] as Int
-                val charging  = base[4] as Boolean
+                val count = base.count
+                val strength = base.strength
+                val connected = base.connected
+                val battery = base.battery
+                val charging = base.charging
                 val active = connected && count > 0
                 StatusUiState(
                     active = active,
