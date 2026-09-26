@@ -224,8 +224,8 @@ mod tests {
     // `scripts/generate_known_answer_vectors.py`.
     #[test]
     fn known_answer_epoch_tag() {
-        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
-        const EPOCH_2: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+        const EPOCH_2: &str = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
         const EXPECTED_1: &str = "a9cc1a2ebe2bfc";
         const EXPECTED_2: &str = "2a018ea9dd55ae";
         let message = b"beacon-payload";
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn known_answer_epoch_ratchet_step() {
-        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
+        const EPOCH_1: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
         const NEXT: &str = "466346638930a5f7ee0cc43c82f334e395229040fd7f34bd886f959af1a4987d";
         const NEXT2: &str = "c885a6683bead167fb3487e3f3465794448d40680cadec2658caa1cce4d64059";
 
