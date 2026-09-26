@@ -1050,6 +1050,7 @@ impl MeshEngine {
 
     /// Current routing logical clock. Exposed for persistence tests and
     /// diagnostics; production code reaches this through `routing_snapshot`.
+    #[cfg(test)]
     pub fn snapshot_tick(&self) -> u64 {
         self.routing.current_tick_value()
     }
