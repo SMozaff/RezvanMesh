@@ -116,17 +116,11 @@ jobs:
         run: cargo test -p rezvan-core --locked
 
   # ---------------------------------------------------------------------
-  # Dependency vulnerability / advisory scan. Separate from rust-test so a
-  # newly-disclosed advisory (which nobody here controls the timing of)
-  # doesn't block a same-day merge on its own -- surfaced as a visible,
-  # non-blocking report instead.
-  #
-  # IMPORTANT SCOPE LIMIT: this job only sees Rust advisories (RUSTSEC-*) in
-  # the Cargo graph. It cannot see a C-level advisory in a vendored native
-  # library. In particular it gives NO signal about the vendored libsodium
-  # pinned by `sodiumoxide`, which is roughly five years old -- see
-  # rust/SODIUMOXIDE_MIGRATION.md. Do not read a green audit job as evidence
-  # that the cryptography is current; it is not.
+  # Dependency vulnerability / advisory scan. This job is intentionally
+  # advisory-only so a newly disclosed RustSec issue is surfaced without
+  # blocking unrelated development while maintainers assess remediation.
+  # It covers the Rust dependency graph; it does not replace a complete
+  # application security review or Android/OEM/device testing.
   # ---------------------------------------------------------------------
   rust-audit:
     name: Rust — dependency advisory scan
