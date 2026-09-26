@@ -523,7 +523,7 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeCreateChannelKey(
         Some(key) => key,
         None => return std::ptr::null_mut(),
     };
-    vec_to_jbytearray(&mut env, &key.to_vec()).unwrap_or(std::ptr::null_mut())
+    vec_to_jbytearray(&mut env, key.as_ref()).unwrap_or(std::ptr::null_mut())
 }
 
 /// Stores a channel key received out-of-band (joining an existing channel
