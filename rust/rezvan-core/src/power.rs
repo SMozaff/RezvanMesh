@@ -6,13 +6,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PowerState {
-    Emergency   = 0,
-    Active      = 1,
-    Balanced    = 2,
-    PowerSaver  = 3,
-    Minimal     = 4,
+    Emergency = 0,
+    Active = 1,
+    Balanced = 2,
+    PowerSaver = 3,
+    Minimal = 4,
     Hibernation = 5,
-    Dead        = 6,
+    Dead = 6,
 }
 
 /// Compute the recommended power state given current conditions.
@@ -34,12 +34,12 @@ pub fn compute_state(
         return PowerState::Active;
     }
     match battery {
-        0..=5   => PowerState::Dead,
-        6..=15  => PowerState::Hibernation,
+        0..=5 => PowerState::Dead,
+        6..=15 => PowerState::Hibernation,
         16..=30 => PowerState::Minimal,
         31..=50 => PowerState::PowerSaver,
         51..=80 => PowerState::Balanced,
-        _       => PowerState::Active,
+        _ => PowerState::Active,
     }
 }
 
@@ -50,18 +50,14 @@ pub fn should_advertise(state: PowerState) -> bool {
         | PowerState::Active
         | PowerState::Balanced
         | PowerState::PowerSaver => true,
-        PowerState::Minimal
-        | PowerState::Hibernation
-        | PowerState::Dead => false,
+        PowerState::Minimal | PowerState::Hibernation | PowerState::Dead => false,
     }
 }
 
 /// Whether Wi‑Fi Direct should be enabled in the given power state.
 pub fn should_enable_wifi(state: PowerState) -> bool {
     match state {
-        PowerState::Emergency
-        | PowerState::Active
-        | PowerState::Balanced => true,
+        PowerState::Emergency | PowerState::Active | PowerState::Balanced => true,
         _ => false,
     }
 }
@@ -69,11 +65,11 @@ pub fn should_enable_wifi(state: PowerState) -> bool {
 /// BLE scan interval and window (milliseconds) for the given power state.
 pub fn get_scan_params(state: PowerState) -> (u32, u32) {
     match state {
-        PowerState::Emergency   => (1000, 500),
-        PowerState::Active      => (1000, 250),
-        PowerState::Balanced    => (5000, 250),
-        PowerState::PowerSaver  => (30000, 100),
-        PowerState::Minimal     => (120000, 50),
+        PowerState::Emergency => (1000, 500),
+        PowerState::Active => (1000, 250),
+        PowerState::Balanced => (5000, 250),
+        PowerState::PowerSaver => (30000, 100),
+        PowerState::Minimal => (120000, 50),
         _ => (0, 0),
     }
 }
@@ -82,13 +78,13 @@ pub fn get_scan_params(state: PowerState) -> (u32, u32) {
 /// This is used by the routing table to throttle OGM flooding.
 pub fn get_ogm_interval_secs(state: PowerState) -> u64 {
     match state {
-        PowerState::Emergency   => 2,
-        PowerState::Active      => 5,
-        PowerState::Balanced    => 10,
-        PowerState::PowerSaver  => 30,
-        PowerState::Minimal     => 120,
+        PowerState::Emergency => 2,
+        PowerState::Active => 5,
+        PowerState::Balanced => 10,
+        PowerState::PowerSaver => 30,
+        PowerState::Minimal => 120,
         PowerState::Hibernation => 600,
-        PowerState::Dead        => u64::MAX,
+        PowerState::Dead => u64::MAX,
     }
 }
 

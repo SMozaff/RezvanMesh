@@ -35,10 +35,10 @@
 //! actively tells a reader "this is unreachable" is worse than no comment when
 //! it is wrong, since it invites someone to "clean up" the live path.
 
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{Key as AeadKey, XChaCha20Poly1305, XNonce};
 use crate::identity::IdentityKeypair;
 use crate::sign;
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{Key as AeadKey, XChaCha20Poly1305, XNonce};
 
 /// Generate a random 32‑byte shared sender key for group messaging.
 /// Distributed out-of-band to all channel members (e.g. alongside the
@@ -80,7 +80,13 @@ pub fn encrypt(key: &[u8; 32], plaintext: &[u8], sender_identity: &IdentityKeypa
     let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(key));
     // Encryption of an in-memory buffer with a random nonce cannot fail.
     let ciphertext = cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad: &[] })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad: &[],
+            },
+        )
         .expect("XChaCha20-Poly1305 encryption of an in-memory buffer cannot fail");
 
     let mut signed_bytes = Vec::with_capacity(24 + ciphertext.len());
@@ -109,11 +115,7 @@ pub fn encrypt(key: &[u8; 32], plaintext: &[u8], sender_identity: &IdentityKeypa
 /// Returns `None` if the message is too short, the sender pubkey doesn't
 /// match what the caller expected, the signature doesn't verify, or AEAD
 /// decryption/authentication fails.
-pub fn decrypt(
-    key: &[u8; 32],
-    expected_sender_pubkey: &[u8; 32],
-    wire: &[u8],
-) -> Option<Vec<u8>> {
+pub fn decrypt(key: &[u8; 32], expected_sender_pubkey: &[u8; 32], wire: &[u8]) -> Option<Vec<u8>> {
     const NONCE_LEN: usize = 24;
     const PUBKEY_LEN: usize = 32;
     const SIG_LEN: usize = 64;
@@ -207,7 +209,10 @@ mod tests {
         forged[pubkey_start..pubkey_start + 32].copy_from_slice(&alice.public_ed25519);
 
         let plaintext = decrypt(&key, &alice.public_ed25519, &forged);
-        assert_eq!(plaintext, None, "forged sender field without the real private key must fail verification");
+        assert_eq!(
+            plaintext, None,
+            "forged sender field without the real private key must fail verification"
+        );
     }
 
     #[test]
@@ -220,7 +225,10 @@ mod tests {
         wire[30] ^= 0x01;
 
         let plaintext = decrypt(&key, &alice.public_ed25519, &wire);
-        assert_eq!(plaintext, None, "tampered ciphertext must fail signature verification");
+        assert_eq!(
+            plaintext, None,
+            "tampered ciphertext must fail signature verification"
+        );
     }
 
     #[test]

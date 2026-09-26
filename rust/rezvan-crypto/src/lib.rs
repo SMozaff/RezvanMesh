@@ -1,10 +1,10 @@
-pub mod identity;
-pub mod sign;
-pub mod sender_key;
-pub mod hkdf;
 pub mod beacon_mac;
 pub mod epoch_key;
+pub mod hkdf;
+pub mod identity;
 pub mod secure_store;
+pub mod sender_key;
+pub mod sign;
 
 /// Test-only helpers. Not compiled into release builds.
 #[cfg(test)]
@@ -36,11 +36,21 @@ pub trait CryptoProvider: Send + Sync {
     /// receivers can verify who actually sent it (see sender_key.rs module
     /// docs -- security audit finding #10). `sender_identity` is the
     /// caller's own identity, not the recipient's.
-    fn sender_key_encrypt(&self, key: &[u8; 32], plaintext: &[u8], sender_identity: &IdentityKeypair) -> Vec<u8>;
+    fn sender_key_encrypt(
+        &self,
+        key: &[u8; 32],
+        plaintext: &[u8],
+        sender_identity: &IdentityKeypair,
+    ) -> Vec<u8>;
     /// Decrypts and verifies against `expected_sender_pubkey`, which MUST be
     /// the caller's own independently-known record of that member's identity
     /// (not read from the wire and trusted blindly -- see sender_key.rs docs).
-    fn sender_key_decrypt(&self, key: &[u8; 32], expected_sender_pubkey: &[u8; 32], ciphertext: &[u8]) -> Option<Vec<u8>>;
+    fn sender_key_decrypt(
+        &self,
+        key: &[u8; 32],
+        expected_sender_pubkey: &[u8; 32],
+        ciphertext: &[u8],
+    ) -> Option<Vec<u8>>;
 
     fn hkdf(&self, ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u8>;
 
@@ -64,10 +74,20 @@ impl CryptoProvider for SodiumCryptoProvider {
     fn generate_sender_key(&self) -> [u8; 32] {
         sender_key::generate()
     }
-    fn sender_key_encrypt(&self, key: &[u8; 32], pt: &[u8], sender_identity: &IdentityKeypair) -> Vec<u8> {
+    fn sender_key_encrypt(
+        &self,
+        key: &[u8; 32],
+        pt: &[u8],
+        sender_identity: &IdentityKeypair,
+    ) -> Vec<u8> {
         sender_key::encrypt(key, pt, sender_identity)
     }
-    fn sender_key_decrypt(&self, key: &[u8; 32], expected_sender_pubkey: &[u8; 32], ct: &[u8]) -> Option<Vec<u8>> {
+    fn sender_key_decrypt(
+        &self,
+        key: &[u8; 32],
+        expected_sender_pubkey: &[u8; 32],
+        ct: &[u8],
+    ) -> Option<Vec<u8>> {
         sender_key::decrypt(key, expected_sender_pubkey, ct)
     }
     fn hkdf(&self, ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
@@ -100,11 +120,7 @@ mod olm_regression_test {
             .expect("Bob should have a one-time key");
 
         let mut alice_session = alice
-            .create_outbound_session(
-                SessionConfig::version_1(),
-                bob.curve25519_key(),
-                bob_otk,
-            )
+            .create_outbound_session(SessionConfig::version_1(), bob.curve25519_key(), bob_otk)
             .expect("outbound session");
 
         bob.mark_keys_as_published();
@@ -118,11 +134,7 @@ mod olm_regression_test {
         };
 
         let result = bob
-            .create_inbound_session(
-                SessionConfig::version_1(),
-                alice.curve25519_key(),
-                &prekey,
-            )
+            .create_inbound_session(SessionConfig::version_1(), alice.curve25519_key(), &prekey)
             .expect("Bob should create an inbound session from Alice's pre-key");
 
         assert_eq!(

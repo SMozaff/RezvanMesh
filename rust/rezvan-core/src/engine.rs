@@ -1,13 +1,13 @@
 // rezvan-core/src/engine.rs
 
 use crate::action::Action;
-use crate::power::{PowerState, compute_state};
+use crate::power::{compute_state, PowerState};
 use crate::routing::RoutingTable;
 use crate::session::SessionManager;
 use rezvan_common::{
-    AdvBeaconExt, DecryptedMessage, DirectMessageEnvelopeV1, MessageAckEnvelopeV1,
-    MessageId, MeshPacketHeader, NodeId, PACKET_TYPE_MESSAGE_ACK,
-    MESH_PACKET_VERSION, MESH_PACKET_SIGNATURE_LEN,
+    AdvBeaconExt, DecryptedMessage, DirectMessageEnvelopeV1, MeshPacketHeader,
+    MessageAckEnvelopeV1, MessageId, NodeId, MESH_PACKET_SIGNATURE_LEN, MESH_PACKET_VERSION,
+    PACKET_TYPE_MESSAGE_ACK,
 };
 use rezvan_crypto::CryptoProvider;
 
@@ -182,40 +182,51 @@ impl MeshEngine {
         let header = match MeshPacketHeader::deserialize(raw_packet) {
             Some(h) => h,
             None => {
-                return (None, vec![Action::DiagLog {
-                    tag: "RUST".into(),
-                    level: 3,
-                    message: format!(
-                        "deserialize FAILED len={} first_bytes={:02x?}",
-                        raw_packet.len(),
-                        &raw_packet.get(..8.min(raw_packet.len())).unwrap_or(raw_packet)
-                    ),
-                }]);
+                return (
+                    None,
+                    vec![Action::DiagLog {
+                        tag: "RUST".into(),
+                        level: 3,
+                        message: format!(
+                            "deserialize FAILED len={} first_bytes={:02x?}",
+                            raw_packet.len(),
+                            &raw_packet
+                                .get(..8.min(raw_packet.len()))
+                                .unwrap_or(raw_packet)
+                        ),
+                    }],
+                );
             }
         };
 
         // Version gate: pre-1.0 clean break -- reject anything not v0.3.
         if header.version != MESH_PACKET_VERSION {
-            return (None, vec![Action::DiagLog {
-                tag: "RUST".into(),
-                level: 2,
-                message: format!(
-                    "Rejecting packet version={:#04x} (expected {:#04x}) from {:02x?}",
-                    header.version, MESH_PACKET_VERSION, header.originator
-                ),
-            }]);
+            return (
+                None,
+                vec![Action::DiagLog {
+                    tag: "RUST".into(),
+                    level: 2,
+                    message: format!(
+                        "Rejecting packet version={:#04x} (expected {:#04x}) from {:02x?}",
+                        header.version, MESH_PACKET_VERSION, header.originator
+                    ),
+                }],
+            );
         }
 
         // Loopback guard.
         if header.originator == self.node_id {
-            return (None, vec![Action::DiagLog {
-                tag: "RUST".into(),
-                level: 1,
-                message: format!(
-                    "LOOPBACK ok seq={} type={:#04x} rssi={}",
-                    header.sequence, header.packet_type, rssi
-                ),
-            }]);
+            return (
+                None,
+                vec![Action::DiagLog {
+                    tag: "RUST".into(),
+                    level: 1,
+                    message: format!(
+                        "LOOPBACK ok seq={} type={:#04x} rssi={}",
+                        header.sequence, header.packet_type, rssi
+                    ),
+                }],
+            );
         }
 
         let payload_end = MeshPacketHeader::SIZE + header.payload_len as usize;
@@ -226,7 +237,10 @@ impl MeshEngine {
         // All others (0x01 OGM, 0x03 broadcast, 0x04 handshake, 0x05 KeyAnn,
         // 0x06 channel message) carry a 64-byte Ed25519 signature appended
         // after the payload.
-        let needs_sig = matches!(header.packet_type, 0x01 | 0x03 | 0x04 | 0x05 | 0x06 | PACKET_TYPE_MESSAGE_ACK);
+        let needs_sig = matches!(
+            header.packet_type,
+            0x01 | 0x03 | 0x04 | 0x05 | 0x06 | PACKET_TYPE_MESSAGE_ACK
+        );
 
         // The frame must be *exactly* as long as the header claims, for signed
         // and unsigned packet types alike.
@@ -246,17 +260,26 @@ impl MeshEngine {
         // copies `payload_len` and the payload unchanged (and only mutates
         // ttl/hop_count for unsigned 0x02), so the total length is preserved.
         let expected_len = payload_end
-            .checked_add(if needs_sig { MESH_PACKET_SIGNATURE_LEN } else { 0 })
+            .checked_add(if needs_sig {
+                MESH_PACKET_SIGNATURE_LEN
+            } else {
+                0
+            })
             .unwrap_or(usize::MAX);
         if raw_packet.len() != expected_len {
-            return (None, vec![Action::DiagLog {
-                tag: "RUST".into(),
-                level: 3,
-                message: format!(
-                    "Packet length mismatch: type={:#04x} len={} expected={}",
-                    header.packet_type, raw_packet.len(), expected_len
-                ),
-            }]);
+            return (
+                None,
+                vec![Action::DiagLog {
+                    tag: "RUST".into(),
+                    level: 3,
+                    message: format!(
+                        "Packet length mismatch: type={:#04x} len={} expected={}",
+                        header.packet_type,
+                        raw_packet.len(),
+                        expected_len
+                    ),
+                }],
+            );
         }
 
         if needs_sig {
@@ -321,26 +344,32 @@ impl MeshEngine {
             let ed25519_key = match ed25519_key {
                 Some(k) => k,
                 None => {
-                    return (None, vec![Action::DiagLog {
-                        tag: "RUST".into(),
-                        level: 2,
-                        message: format!(
-                            "Unknown sender {:02x?} for type={:#04x} -- dropping (no key yet)",
-                            header.originator, header.packet_type
-                        ),
-                    }]);
+                    return (
+                        None,
+                        vec![Action::DiagLog {
+                            tag: "RUST".into(),
+                            level: 2,
+                            message: format!(
+                                "Unknown sender {:02x?} for type={:#04x} -- dropping (no key yet)",
+                                header.originator, header.packet_type
+                            ),
+                        }],
+                    );
                 }
             };
 
             if !self.crypto.verify(&ed25519_key, signed_bytes, &sig) {
-                return (None, vec![Action::DiagLog {
-                    tag: "RUST".into(),
-                    level: 3,
-                    message: format!(
-                        "Signature FAILED for type={:#04x} from {:02x?}",
-                        header.packet_type, header.originator
-                    ),
-                }]);
+                return (
+                    None,
+                    vec![Action::DiagLog {
+                        tag: "RUST".into(),
+                        level: 3,
+                        message: format!(
+                            "Signature FAILED for type={:#04x} from {:02x?}",
+                            header.packet_type, header.originator
+                        ),
+                    }],
+                );
             }
         }
 
@@ -376,9 +405,15 @@ impl MeshEngine {
         // only reflects what the originator set, and `seen_and_record` is
         // the sole loop-prevention mechanism. See `build_relay_action`'s
         // docs for the full reasoning.
-        let is_relay_candidate = matches!(header.packet_type, 0x02 | 0x03 | 0x06 | PACKET_TYPE_MESSAGE_ACK);
+        let is_relay_candidate = matches!(
+            header.packet_type,
+            0x02 | 0x03 | 0x06 | PACKET_TYPE_MESSAGE_ACK
+        );
         if is_relay_candidate {
-            if self.routing.seen_and_record(header.originator, header.sequence) {
+            if self
+                .routing
+                .seen_and_record(header.originator, header.sequence)
+            {
                 // Already relayed this exact (originator, sequence) before
                 // -- drop silently to prevent relay loops/duplicate floods.
                 return (None, Vec::new());
@@ -396,7 +431,8 @@ impl MeshEngine {
                     }
                     // Broadcast: fall through to normal dispatch below for the
                     // local-processing side, but keep the relay action too.
-                    let (msg, mut more_actions) = self.dispatch_packet(&header, raw_packet, payload_end, timestamp, rssi);
+                    let (msg, mut more_actions) =
+                        self.dispatch_packet(&header, raw_packet, payload_end, timestamp, rssi);
                     actions.append(&mut more_actions);
                     return (msg, actions);
                 }
@@ -445,7 +481,9 @@ impl MeshEngine {
         let next_hop = if header.destination == rezvan_common::BROADCAST_DESTINATION {
             crate::action::BROADCAST_TARGET
         } else {
-            self.routing.get_best_route(&header.destination).map(|r| r.next_hop)?
+            self.routing
+                .get_best_route(&header.destination)
+                .map(|r| r.next_hop)?
         };
 
         let can_mutate_header = header.packet_type == 0x02;
@@ -464,7 +502,10 @@ impl MeshEngine {
             raw_packet.to_vec()
         };
 
-        Some(Action::SendBlePacket { target: next_hop, data })
+        Some(Action::SendBlePacket {
+            target: next_hop,
+            data,
+        })
     }
 
     /// The per-packet-type handling previously inlined directly in
@@ -496,20 +537,27 @@ impl MeshEngine {
                         let (protocol_message_id, created_at_ms, content) =
                             if plain.starts_with(&rezvan_common::DIRECT_ENVELOPE_MAGIC) {
                                 match DirectMessageEnvelopeV1::deserialize(&plain) {
-                                    Some(envelope) => (Some(envelope.message_id), envelope.created_at_ms, envelope.body),
+                                    Some(envelope) => (
+                                        Some(envelope.message_id),
+                                        envelope.created_at_ms,
+                                        envelope.body,
+                                    ),
                                     None => return (None, Vec::new()),
                                 }
                             } else {
                                 (None, timestamp, plain)
                             };
-                        return (Some(DecryptedMessage {
-                            conversation_id: [0u8; 16],
-                            sender_id: header.originator,
-                            timestamp: created_at_ms,
-                            message_type: 0,
-                            protocol_message_id,
-                            content,
-                        }), Vec::new());
+                        return (
+                            Some(DecryptedMessage {
+                                conversation_id: [0u8; 16],
+                                sender_id: header.originator,
+                                timestamp: created_at_ms,
+                                message_type: 0,
+                                protocol_message_id,
+                                content,
+                            }),
+                            Vec::new(),
+                        );
                     }
                 }
                 (None, Vec::new())
@@ -519,17 +567,21 @@ impl MeshEngine {
                 // unencrypted (public-safety case: decrypt if session exists,
                 // otherwise use plaintext directly).
                 if let Some(payload) = raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
-                    let content = self.sessions
+                    let content = self
+                        .sessions
                         .decrypt(&header.originator, payload)
                         .unwrap_or_else(|_| payload.to_vec());
-                    return (Some(DecryptedMessage {
-                        conversation_id: [0u8; 16],
-                        sender_id: header.originator,
-                        timestamp,
-                        message_type: 3,
-                        protocol_message_id: None,
-                        content,
-                    }), Vec::new());
+                    return (
+                        Some(DecryptedMessage {
+                            conversation_id: [0u8; 16],
+                            sender_id: header.originator,
+                            timestamp,
+                            message_type: 3,
+                            protocol_message_id: None,
+                            content,
+                        }),
+                        Vec::new(),
+                    );
                 }
                 (None, Vec::new())
             }
@@ -546,7 +598,8 @@ impl MeshEngine {
                     _ => return (None, Vec::new()),
                 };
 
-                let channel_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let channel_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 let sender_key_wire = &payload[4..];
 
                 let key = match self.sessions.channel_key(channel_id) {
@@ -579,14 +632,17 @@ impl MeshEngine {
                         // the conversation key without a separate field.
                         let mut conv_id = [0u8; 16];
                         conv_id[0..4].copy_from_slice(&channel_id.to_be_bytes());
-                        (Some(DecryptedMessage {
-                            conversation_id: conv_id,
-                            sender_id: header.originator,
-                            timestamp,
-                            message_type: 6,
-                            protocol_message_id: None,
-                            content: plain,
-                        }), Vec::new())
+                        (
+                            Some(DecryptedMessage {
+                                conversation_id: conv_id,
+                                sender_id: header.originator,
+                                timestamp,
+                                message_type: 6,
+                                protocol_message_id: None,
+                                content: plain,
+                            }),
+                            Vec::new(),
+                        )
                     }
                     None => (None, Vec::new()), // wrong key, forged sender, or tampered
                 }
@@ -610,22 +666,34 @@ impl MeshEngine {
                     Some(ack) => ack,
                     None => return (None, Vec::new()),
                 };
-                if ack.original_sender != self.node_id || ack.original_recipient != header.originator {
-                    return (None, vec![Action::DiagLog {
-                        tag: "RUST".into(),
-                        level: 2,
-                        message: "Rejected acknowledgement with mismatched sender/recipient binding".into(),
-                    }]);
+                if ack.original_sender != self.node_id
+                    || ack.original_recipient != header.originator
+                {
+                    return (
+                        None,
+                        vec![Action::DiagLog {
+                            tag: "RUST".into(),
+                            level: 2,
+                            message:
+                                "Rejected acknowledgement with mismatched sender/recipient binding"
+                                    .into(),
+                        }],
+                    );
                 }
-                (None, vec![Action::MessageAcknowledged {
-                    message_id: ack.message_id,
-                    ack_sender: header.originator,
-                }])
+                (
+                    None,
+                    vec![Action::MessageAcknowledged {
+                        message_id: ack.message_id,
+                        ack_sender: header.originator,
+                    }],
+                )
             }
             0x04 => {
                 // Handshake -- signature verified above.
                 if let Some(payload) = raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
-                    let _ = self.sessions.process_inbound_handshake(&header.originator, payload);
+                    let _ = self
+                        .sessions
+                        .process_inbound_handshake(&header.originator, payload);
                 }
                 (None, Vec::new())
             }
@@ -634,7 +702,8 @@ impl MeshEngine {
                 // Register the full 164-byte bundle: mesh identity keys plus
                 // the network-wide beacon epoch key/number.
                 if let Some(payload) = raw_packet.get(MeshPacketHeader::SIZE..payload_end) {
-                    self.sessions.register_peer_keys(&header.originator, payload);
+                    self.sessions
+                        .register_peer_keys(&header.originator, payload);
                 }
                 (None, Vec::new())
             }
@@ -657,14 +726,19 @@ impl MeshEngine {
         // second check is now unreachable in practice but kept as harmless
         // defense-in-depth in case that invariant is ever weakened later.
         if beacon.version != AdvBeaconExt::VERSION {
-            return (None, vec![Action::DiagLog {
-                tag: "RUST".into(),
-                level: 2,
-                message: format!(
-                    "Beacon version={:#04x} != {:#04x} from {:02x?}; ignoring",
-                    beacon.version, AdvBeaconExt::VERSION, beacon.originator
-                ),
-            }]);
+            return (
+                None,
+                vec![Action::DiagLog {
+                    tag: "RUST".into(),
+                    level: 2,
+                    message: format!(
+                        "Beacon version={:#04x} != {:#04x} from {:02x?}; ignoring",
+                        beacon.version,
+                        AdvBeaconExt::VERSION,
+                        beacon.originator
+                    ),
+                }],
+            );
         }
 
         // Beacon authentication (per explicit product decision: robustness
@@ -812,7 +886,10 @@ impl MeshEngine {
         };
         let mut packet = header.serialize();
         packet.extend_from_slice(&encrypted);
-        vec![Action::SendBlePacket { target: next_hop, data: packet }]
+        vec![Action::SendBlePacket {
+            target: next_hop,
+            data: packet,
+        }]
     }
 
     /// Build an encrypted, Ed25519-signed receipt acknowledgement after the
@@ -832,15 +909,22 @@ impl MeshEngine {
             original_recipient: self.node_id,
             created_at_ms,
         };
-        let encrypted = match self.sessions.encrypt(original_sender, &envelope.serialize()) {
+        let encrypted = match self
+            .sessions
+            .encrypt(original_sender, &envelope.serialize())
+        {
             Ok(ciphertext) => ciphertext,
             Err(_) => return Vec::new(),
         };
-        let packet = self.build_signed_packet(PACKET_TYPE_MESSAGE_ACK, 10, original_sender, &encrypted);
+        let packet =
+            self.build_signed_packet(PACKET_TYPE_MESSAGE_ACK, 10, original_sender, &encrypted);
         let target = MeshPacketHeader::deserialize(&packet)
             .map(|header| header.next_hop)
             .unwrap_or(*original_sender);
-        vec![Action::SendBlePacket { target, data: packet }]
+        vec![Action::SendBlePacket {
+            target,
+            data: packet,
+        }]
     }
 
     pub fn send_broadcast(&mut self, message: &[u8]) -> Vec<Action> {
@@ -923,7 +1007,10 @@ impl MeshEngine {
     /// The identity (and therefore NodeId) always comes from the seed passed
     /// to `new`; only the *session* material is restored, so a state file
     /// copied between two devices can never change who this node claims to be.
-    pub fn import_state(&mut self, state: crate::persistence::PersistedEngineState) -> Result<(), String> {
+    pub fn import_state(
+        &mut self,
+        state: crate::persistence::PersistedEngineState,
+    ) -> Result<(), String> {
         self.sessions.import_state(state.session)?;
         self.routing.import_state(state.routing);
         self.ogm_sequence = state.ogm_sequence;
@@ -1066,19 +1153,21 @@ impl MeshEngine {
         let power_state_byte = self.power_state as u8;
 
         let mut node_flags: u8 = 0;
-        if self.is_charging { node_flags |= AdvBeaconExt::FLAG_CHARGING; }
+        if self.is_charging {
+            node_flags |= AdvBeaconExt::FLAG_CHARGING;
+        }
         node_flags |= AdvBeaconExt::FLAG_WIFI_DIRECT;
         node_flags |= AdvBeaconExt::FLAG_VOICE;
 
         let mut beacon = AdvBeaconExt {
-            version:     AdvBeaconExt::VERSION,
+            version: AdvBeaconExt::VERSION,
             packet_type: 0x01,
-            originator:  self.node_id,
-            sequence:    self.adv_sequence,
-            battery:     self.battery_level,
+            originator: self.node_id,
+            sequence: self.adv_sequence,
+            battery: self.battery_level,
             power_state: power_state_byte,
             node_flags,
-            mac:         [0u8; 7],
+            mac: [0u8; 7],
         };
 
         // Beacon authentication via the network-wide epoch key (see
@@ -1094,7 +1183,11 @@ impl MeshEngine {
         // one), fall back to an all-zero tag -- receivers without an epoch
         // key either will also fail to verify it (consistent "unverified"
         // outcome) and treat the beacon as discovery-only, same as before.
-        let tag_key = self.sessions.epoch_key().map(|(k, _)| k).unwrap_or([0u8; 32]);
+        let tag_key = self
+            .sessions
+            .epoch_key()
+            .map(|(k, _)| k)
+            .unwrap_or([0u8; 32]);
         let signed = beacon.signed_bytes();
         beacon.mac = rezvan_crypto::epoch_key::compute_tag(&tag_key, &signed);
 
@@ -1145,8 +1238,8 @@ mod tests {
         let mut mallory = make_engine(3);
 
         let bundle = mallory.key_bundle(); // Mallory's OWN keys
-        // Splice: build the packet as if Mallory sent it, but with the
-        // header's originator forged to Alice's NodeId.
+                                           // Splice: build the packet as if Mallory sent it, but with the
+                                           // header's originator forged to Alice's NodeId.
         mallory.ogm_sequence = mallory.ogm_sequence.wrapping_add(1);
         let header = MeshPacketHeader {
             version: MESH_PACKET_VERSION,
@@ -1174,14 +1267,22 @@ mod tests {
         // Must be rejected BEFORE registration -- Alice's NodeId must not
         // end up bound to Mallory's keys.
         assert!(
-            victim_view.sessions.peer_ed25519_identity(&alice.node_id).is_none(),
+            victim_view
+                .sessions
+                .peer_ed25519_identity(&alice.node_id)
+                .is_none(),
             "spoofed KeyAnnouncement must not register attacker keys under the victim's NodeId"
         );
-        let logged_rejection = actions.iter().any(|a| matches!(
-            a,
-            Action::DiagLog { message, .. } if message.contains("REJECTED")
-        ));
-        assert!(logged_rejection, "rejection should be logged for diagnostics");
+        let logged_rejection = actions.iter().any(|a| {
+            matches!(
+                a,
+                Action::DiagLog { message, .. } if message.contains("REJECTED")
+            )
+        });
+        assert!(
+            logged_rejection,
+            "rejection should be logged for diagnostics"
+        );
     }
 
     #[test]
@@ -1249,7 +1350,10 @@ mod tests {
         assert_eq!(message.content, b"gate1 receipt");
 
         let ack_actions = bob.build_received_ack(&alice.node_id, message_id, 1_700_000_000_001);
-        let Action::SendBlePacket { data: ack_packet, .. } = &ack_actions[0] else {
+        let Action::SendBlePacket {
+            data: ack_packet, ..
+        } = &ack_actions[0]
+        else {
             panic!("expected signed acknowledgement SendBlePacket");
         };
         let (ack_message, ack_events) = alice.process_incoming(ack_packet, -55, 1_700_000_000_002);
@@ -1271,7 +1375,11 @@ mod tests {
         bob.set_channel_key(channel_id, key);
 
         let actions = alice.send_channel_message(channel_id, b"hello channel");
-        assert_eq!(actions.len(), 1, "should produce exactly one broadcast action");
+        assert_eq!(
+            actions.len(),
+            1,
+            "should produce exactly one broadcast action"
+        );
         let Action::SendBlePacket { data, .. } = &actions[0] else {
             panic!("expected SendBlePacket action");
         };
@@ -1300,7 +1408,10 @@ mod tests {
             panic!("expected SendBlePacket action");
         };
         let (msg, _) = bob.process_incoming(data, -60, 0);
-        assert!(msg.is_none(), "bob without the channel key must not decode the message");
+        assert!(
+            msg.is_none(),
+            "bob without the channel key must not decode the message"
+        );
     }
 
     #[test]
@@ -1333,7 +1444,11 @@ mod tests {
         };
         let (msg, _) = bob.process_incoming(data, -60, 0);
         let msg = msg.expect("bob should decode mallory's own legitimate message");
-        assert_eq!(msg.sender_id, mallory.node_id(), "sender must be attributed correctly, never spoofed");
+        assert_eq!(
+            msg.sender_id,
+            mallory.node_id(),
+            "sender must be attributed correctly, never spoofed"
+        );
         assert_ne!(msg.sender_id, alice.node_id());
     }
 
@@ -1349,7 +1464,9 @@ mod tests {
 
         // Confirm the old key works before rotation.
         let actions = alice.send_channel_message(channel_id, b"before rotation");
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected packet"); };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected packet");
+        };
         let (msg, _) = bob.process_incoming(data, -60, 0);
         assert!(msg.is_some(), "old key should work before rotation");
 
@@ -1359,16 +1476,26 @@ mod tests {
         assert_ne!(old_key, new_key, "rotation must produce a different key");
 
         let actions = alice.send_channel_message(channel_id, b"after rotation");
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected packet"); };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected packet");
+        };
         let (msg, _) = bob.process_incoming(data, -60, 0);
-        assert!(msg.is_none(), "bob with the stale key must not decode a message encrypted under the new key");
+        assert!(
+            msg.is_none(),
+            "bob with the stale key must not decode a message encrypted under the new key"
+        );
 
         // Once bob receives the new key out-of-band, decoding resumes.
         bob.set_channel_key(channel_id, new_key);
         let actions = alice.send_channel_message(channel_id, b"after bob updates");
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected packet"); };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected packet");
+        };
         let (msg, _) = bob.process_incoming(data, -60, 0);
-        assert!(msg.is_some(), "bob with the updated key should decode again");
+        assert!(
+            msg.is_some(),
+            "bob with the updated key should decode again"
+        );
     }
 
     #[test]
@@ -1425,9 +1552,15 @@ mod tests {
         // key. The first call must bootstrap one (ensure_epoch_key), not
         // leave it None or panic.
         let mut alice = make_engine(1);
-        assert!(alice.sessions.epoch_key().is_none(), "no epoch key before first key_bundle() call");
+        assert!(
+            alice.sessions.epoch_key().is_none(),
+            "no epoch key before first key_bundle() call"
+        );
         let _bundle = alice.key_bundle();
-        assert!(alice.sessions.epoch_key().is_some(), "key_bundle() must bootstrap an epoch key");
+        assert!(
+            alice.sessions.epoch_key().is_some(),
+            "key_bundle() must bootstrap an epoch key"
+        );
     }
 
     #[test]
@@ -1472,7 +1605,9 @@ mod tests {
                     alice_beacon = Some(data);
                 }
             }
-            if alice_beacon.is_some() { break; }
+            if alice_beacon.is_some() {
+                break;
+            }
         }
         let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
         let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
@@ -1504,8 +1639,11 @@ mod tests {
         let bob_bundle = bob.key_bundle();
         carol.register_peer_keys(&bob.node_id, &bob_bundle);
 
-        assert_eq!(alice.sessions.epoch_key(), carol.sessions.epoch_key(),
-            "epoch key must propagate transitively through the mesh");
+        assert_eq!(
+            alice.sessions.epoch_key(),
+            carol.sessions.epoch_key(),
+            "epoch key must propagate transitively through the mesh"
+        );
 
         let mut alice_beacon: Option<Vec<u8>> = None;
         for _ in 0..50 {
@@ -1514,7 +1652,9 @@ mod tests {
                     alice_beacon = Some(data);
                 }
             }
-            if alice_beacon.is_some() { break; }
+            if alice_beacon.is_some() {
+                break;
+            }
         }
         let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
         let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
@@ -1545,7 +1685,9 @@ mod tests {
                     alice_beacon = Some(data);
                 }
             }
-            if alice_beacon.is_some() { break; }
+            if alice_beacon.is_some() {
+                break;
+            }
         }
         let beacon_data = alice_beacon.expect("Alice should have advertised within 50 ticks");
         let beacon_bytes = &beacon_data[..rezvan_common::AdvBeaconExt::SIZE];
@@ -1553,7 +1695,10 @@ mod tests {
         bob.process_incoming(beacon_bytes, -60, 0);
 
         let snap = bob.routing_snapshot();
-        assert_eq!(snap[0], 0, "unverified beacon (no shared epoch key) must not add a route");
+        assert_eq!(
+            snap[0], 0,
+            "unverified beacon (no shared epoch key) must not add a route"
+        );
     }
 
     // ---- Multi-hop relay tests (version 0x03 wire format) ------------------
@@ -1621,21 +1766,38 @@ mod tests {
         seed_route(&mut bob, carol.node_id, carol.node_id);
 
         let actions = alice.send_message(&carol.node_id, b"hello via relay", 0);
-        assert_eq!(actions.len(), 1, "send_message should produce exactly one SendBlePacket");
+        assert_eq!(
+            actions.len(),
+            1,
+            "send_message should produce exactly one SendBlePacket"
+        );
         let Action::SendBlePacket { target, data } = &actions[0] else {
             panic!("expected SendBlePacket");
         };
-        assert_eq!(*target, bob.node_id, "Alice must send toward Bob (the resolved next hop), not directly to Carol");
+        assert_eq!(
+            *target, bob.node_id,
+            "Alice must send toward Bob (the resolved next hop), not directly to Carol"
+        );
 
         // Bob receives it. He is NOT the destination (Carol is), so he must
         // relay rather than attempt to decrypt.
         let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
-        assert!(msg.is_none(), "Bob is not the final recipient -- must not surface a decrypted message locally");
+        assert!(
+            msg.is_none(),
+            "Bob is not the final recipient -- must not surface a decrypted message locally"
+        );
         assert_eq!(bob_actions.len(), 1, "Bob must relay exactly one packet");
-        let Action::SendBlePacket { target, data: relayed_data } = &bob_actions[0] else {
+        let Action::SendBlePacket {
+            target,
+            data: relayed_data,
+        } = &bob_actions[0]
+        else {
             panic!("expected relayed SendBlePacket");
         };
-        assert_eq!(*target, carol.node_id, "Bob must relay toward Carol (his resolved next hop for Carol)");
+        assert_eq!(
+            *target, carol.node_id,
+            "Bob must relay toward Carol (his resolved next hop for Carol)"
+        );
 
         // The relayed packet must have ttl decremented and hop_count
         // incremented relative to what Alice originally sent (0x02 has no
@@ -1643,10 +1805,24 @@ mod tests {
         // build_relay_action's docs).
         let original_header = rezvan_common::MeshPacketHeader::deserialize(data).unwrap();
         let relayed_header = rezvan_common::MeshPacketHeader::deserialize(relayed_data).unwrap();
-        assert_eq!(relayed_header.ttl, original_header.ttl - 1, "relay must decrement ttl for unsigned (0x02) packets");
-        assert_eq!(relayed_header.hop_count, original_header.hop_count + 1, "relay must increment hop_count for unsigned (0x02) packets");
-        assert_eq!(relayed_header.originator, alice.node_id, "originator must be preserved through relay");
-        assert_eq!(relayed_header.destination, carol.node_id, "destination must be preserved through relay");
+        assert_eq!(
+            relayed_header.ttl,
+            original_header.ttl - 1,
+            "relay must decrement ttl for unsigned (0x02) packets"
+        );
+        assert_eq!(
+            relayed_header.hop_count,
+            original_header.hop_count + 1,
+            "relay must increment hop_count for unsigned (0x02) packets"
+        );
+        assert_eq!(
+            relayed_header.originator, alice.node_id,
+            "originator must be preserved through relay"
+        );
+        assert_eq!(
+            relayed_header.destination, carol.node_id,
+            "destination must be preserved through relay"
+        );
     }
 
     #[test]
@@ -1666,11 +1842,16 @@ mod tests {
         // Bob is given no route to Carol at all.
 
         let actions = alice.send_message(&carol.node_id, b"undeliverable", 0);
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected SendBlePacket")
+        };
 
         let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
         assert!(msg.is_none());
-        assert!(bob_actions.is_empty(), "no route to relay through -- must drop silently, not error or misdeliver");
+        assert!(
+            bob_actions.is_empty(),
+            "no route to relay through -- must drop silently, not error or misdeliver"
+        );
     }
 
     #[test]
@@ -1693,7 +1874,9 @@ mod tests {
         seed_route(&mut bob, carol.node_id, carol.node_id);
 
         let actions = alice.send_message(&carol.node_id, b"loop test", 0);
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected SendBlePacket")
+        };
 
         let (_msg1, actions1) = bob.process_incoming(data, -60, 0);
         assert_eq!(actions1.len(), 1, "first sighting must relay");
@@ -1701,7 +1884,10 @@ mod tests {
         // Simulate the exact same wire bytes arriving at Bob again (e.g. a
         // duplicate delivery, or a routing cycle looping it back).
         let (_msg2, actions2) = bob.process_incoming(data, -60, 0);
-        assert!(actions2.is_empty(), "second sighting of the same (originator, sequence) must be dropped, not relayed again");
+        assert!(
+            actions2.is_empty(),
+            "second sighting of the same (originator, sequence) must be dropped, not relayed again"
+        );
     }
 
     #[test]
@@ -1721,14 +1907,29 @@ mod tests {
         bob.register_peer_keys(&alice.node_id, &alice_bundle);
 
         let actions = alice.send_broadcast(b"evacuate now");
-        let Action::SendBlePacket { data, .. } = &actions[0] else { panic!("expected SendBlePacket") };
+        let Action::SendBlePacket { data, .. } = &actions[0] else {
+            panic!("expected SendBlePacket")
+        };
 
         let (msg, bob_actions) = bob.process_incoming(data, -60, 0);
-        assert!(msg.is_some(), "broadcast recipient must surface the message locally");
+        assert!(
+            msg.is_some(),
+            "broadcast recipient must surface the message locally"
+        );
         assert_eq!(msg.unwrap().content, b"evacuate now");
-        assert_eq!(bob_actions.len(), 1, "broadcast must also be re-flooded onward");
-        let Action::SendBlePacket { target, .. } = &bob_actions[0] else { panic!("expected re-flood SendBlePacket") };
-        assert_eq!(*target, crate::action::BROADCAST_TARGET, "re-flood target must be the broadcast sentinel");
+        assert_eq!(
+            bob_actions.len(),
+            1,
+            "broadcast must also be re-flooded onward"
+        );
+        let Action::SendBlePacket { target, .. } = &bob_actions[0] else {
+            panic!("expected re-flood SendBlePacket")
+        };
+        assert_eq!(
+            *target,
+            crate::action::BROADCAST_TARGET,
+            "re-flood target must be the broadcast sentinel"
+        );
     }
 
     #[test]
@@ -1763,18 +1964,27 @@ mod tests {
                     }
                 }
             }
-            if ogm_packet.is_some() { break; }
+            if ogm_packet.is_some() {
+                break;
+            }
         }
-        let packet = ogm_packet.expect("tick() should emit a signed 0x01 OGM broadcast within 200 ticks");
+        let packet =
+            ogm_packet.expect("tick() should emit a signed 0x01 OGM broadcast within 200 ticks");
 
         let (msg, actions) = bob.process_incoming(&packet, -60, 0);
         assert!(msg.is_none(), "an OGM produces no decrypted message");
         // 0x01 is deliberately excluded from the relay-candidate set (see
         // process_incoming's relay section), so Bob must not try to relay
         // it -- only feed it into his routing table.
-        assert!(actions.is_empty(), "OGM is not a relay-candidate type; only routing-table bookkeeping happens");
+        assert!(
+            actions.is_empty(),
+            "OGM is not a relay-candidate type; only routing-table bookkeeping happens"
+        );
 
         let snap = bob.routing_snapshot();
-        assert!(snap[0] >= 1, "Bob's routing table should reflect Alice as a route after processing her OGM");
+        assert!(
+            snap[0] >= 1,
+            "Bob's routing table should reflect Alice as a route after processing her OGM"
+        );
     }
 }

@@ -47,8 +47,8 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
     // ---- expand ----
     let mut output = Vec::with_capacity(length);
     let mut t: Vec<u8> = Vec::new(); // T(0) = empty
-    // `length <= 32 * 255` is asserted above, so `n` is at most 255 and every
-    // `i` in `1..=n` fits in a u8 without wrapping.
+                                     // `length <= 32 * 255` is asserted above, so `n` is at most 255 and every
+                                     // `i` in `1..=n` fits in a u8 without wrapping.
     let n = length.div_ceil(32);
 
     for i in 1..=n {
@@ -57,7 +57,8 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
         input.extend_from_slice(info);
         input.push(i as u8);
 
-        let mut mac = HmacSha256::new_from_slice(&prk_key).expect("HMAC accepts keys of any length");
+        let mut mac =
+            HmacSha256::new_from_slice(&prk_key).expect("HMAC accepts keys of any length");
         mac.update(&input);
         let tag = mac.finalize().into_bytes();
         t = tag.to_vec();
@@ -77,18 +78,14 @@ mod tests {
         // Test Vector 1 from RFC 5869, Appendix A.1
         let ikm = [0x0bu8; 22];
         let salt: [u8; 13] = [
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
         ];
         let info = [0xf0u8, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
         let okm = hkdf_sha256(&ikm, &salt, &info, 42);
         let expected: [u8; 42] = [
-            0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a,
-            0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
-            0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c,
-            0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
-            0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18,
-            0x58, 0x65,
+            0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+            0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+            0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65,
         ];
         assert_eq!(okm, expected.to_vec());
     }
@@ -253,7 +250,10 @@ mod tests {
         let b = hkdf_sha256(b"ikm", b"salt", b"info", 33);
         assert_eq!(a.len(), 32);
         assert_eq!(b.len(), 33);
-        assert_eq!(&a[..], &b[..32], "HKDF output for 33 bytes must preserve the first 32 bytes");
+        assert_eq!(
+            &a[..],
+            &b[..32],
+            "HKDF output for 33 bytes must preserve the first 32 bytes"
+        );
     }
-
 }

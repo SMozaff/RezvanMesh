@@ -13,9 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rezvan_common::{
-    NodeId, CAPABILITY_FORMAT_VERSION, CAP_MESSAGE_ID_AND_ACK,
-};
+use rezvan_common::{NodeId, CAPABILITY_FORMAT_VERSION, CAP_MESSAGE_ID_AND_ACK};
 use rezvan_crypto::{CryptoProvider, IdentityKeypair};
 use vodozemac::olm::{Account, OlmMessage, Session, SessionConfig};
 use vodozemac::olm::{AccountPickle, SessionPickle};
@@ -88,9 +86,9 @@ struct PeerKeys {
 }
 
 pub struct SessionManager {
-    identity: IdentityKeypair,            // seed-derived; drives NodeId + signing
-    account: Account,                     // our Olm account (message-encryption keys)
-    sessions: HashMap<NodeId, Session>,   // established Olm sessions, per peer
+    identity: IdentityKeypair,          // seed-derived; drives NodeId + signing
+    account: Account,                   // our Olm account (message-encryption keys)
+    sessions: HashMap<NodeId, Session>, // established Olm sessions, per peer
     peer_keys: HashMap<NodeId, PeerKeys>, // peers' advertised key bundles
     /// Per-channel shared symmetric keys for group messaging (see
     /// rezvan_crypto::sender_key). Distribution mechanism (how members agree
@@ -181,7 +179,11 @@ impl SessionManager {
             }
             Some(our_key) => {
                 if their_epoch > self.epoch_number {
-                    if let Some(caught_up) = rezvan_crypto::epoch_key::advance_to(&our_key, self.epoch_number, their_epoch) {
+                    if let Some(caught_up) = rezvan_crypto::epoch_key::advance_to(
+                        &our_key,
+                        self.epoch_number,
+                        their_epoch,
+                    ) {
                         self.epoch_key = Some(caught_up);
                         self.epoch_number = their_epoch;
                     }
@@ -393,7 +395,9 @@ impl SessionManager {
         // epoch key/number, since receivers need it to authenticate our
         // beacons (see rezvan_crypto::epoch_key module docs).
         self.ensure_epoch_key();
-        let epoch_key = self.epoch_key.expect("ensure_epoch_key just guaranteed this is Some");
+        let epoch_key = self
+            .epoch_key
+            .expect("ensure_epoch_key just guaranteed this is Some");
         let epoch_number = self.epoch_number;
 
         let mut out = Vec::with_capacity(169);
@@ -514,7 +518,11 @@ impl SessionManager {
         // No session yet: only a PreKey message can establish one.
         match olm {
             OlmMessage::PreKey(prekey) => {
-                let identity = self.peer_keys.get(peer).ok_or(SessionError::NoPeerKeys)?.olm_identity;
+                let identity = self
+                    .peer_keys
+                    .get(peer)
+                    .ok_or(SessionError::NoPeerKeys)?
+                    .olm_identity;
                 let result = self
                     .account
                     .create_inbound_session(SessionConfig::version_1(), identity, &prekey)
@@ -650,7 +658,8 @@ impl SessionManager {
         // dropped -- keeping them would be harmless but meaningless, and
         // dropping them avoids an unbounded set if a state file were carried
         // across an account rotation.
-        let advertised: std::collections::HashSet<KeyId> = state.otk_advertised.into_iter().collect();
+        let advertised: std::collections::HashSet<KeyId> =
+            state.otk_advertised.into_iter().collect();
         let otk_advertised = account
             .one_time_keys()
             .keys()
@@ -695,24 +704,36 @@ mod tests {
 
     #[test]
     fn removing_a_channel_key_reports_whether_one_was_held() {
-        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[1u8; 32]));
+        let mut mgr = SessionManager::new(
+            Box::new(SodiumCryptoProvider),
+            generate_identity(&[1u8; 32]),
+        );
         let key = mgr.create_channel_key(7);
         assert_eq!(mgr.channel_key(7), Some(key));
         assert!(mgr.channel_key_ids().contains(&7));
 
-        assert!(mgr.remove_channel_key(7), "a held key should be reported as removed");
+        assert!(
+            mgr.remove_channel_key(7),
+            "a held key should be reported as removed"
+        );
         assert_eq!(mgr.channel_key(7), None, "the key must actually be gone");
         assert!(!mgr.channel_key_ids().contains(&7));
 
         // Second removal has nothing to do, and must say so rather than
         // pretending it revoked something.
-        assert!(!mgr.remove_channel_key(7), "removing an absent key is a no-op");
+        assert!(
+            !mgr.remove_channel_key(7),
+            "removing an absent key is a no-op"
+        );
         assert!(!mgr.remove_channel_key(1234), "unknown channel is a no-op");
     }
 
     #[test]
     fn removing_one_channel_leaves_the_others_alone() {
-        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[2u8; 32]));
+        let mut mgr = SessionManager::new(
+            Box::new(SodiumCryptoProvider),
+            generate_identity(&[2u8; 32]),
+        );
         let keep1 = mgr.create_channel_key(1);
         let drop_me = mgr.create_channel_key(2);
         let keep2 = mgr.create_channel_key(3);
@@ -726,7 +747,10 @@ mod tests {
 
     #[test]
     fn channel_key_ids_are_sorted_and_deduplicated() {
-        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[3u8; 32]));
+        let mut mgr = SessionManager::new(
+            Box::new(SodiumCryptoProvider),
+            generate_identity(&[3u8; 32]),
+        );
         for id in [300u32, 7, 65535, 42, 1] {
             mgr.set_channel_key(id, [id as u8; 32]);
         }
@@ -734,10 +758,17 @@ mod tests {
         mgr.set_channel_key(42, [0xAA; 32]);
 
         let ids = mgr.channel_key_ids();
-        assert_eq!(ids, vec![1, 7, 42, 300, 65535], "sorted, and 42 written twice appears once");
+        assert_eq!(
+            ids,
+            vec![1, 7, 42, 300, 65535],
+            "sorted, and 42 written twice appears once"
+        );
         let mut sorted = ids.clone();
         sorted.sort_unstable();
-        assert_eq!(ids, sorted, "ids must be sorted for a deterministic JNI payload");
+        assert_eq!(
+            ids, sorted,
+            "ids must be sorted for a deterministic JNI payload"
+        );
     }
 
     /// The bug this guards: a removed key must not reappear in the persisted
@@ -745,14 +776,21 @@ mod tests {
     /// gave up and the revocation would never take effect.
     #[test]
     fn a_removed_channel_key_does_not_come_back_through_persistence() {
-        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[4u8; 32]));
+        let mut mgr = SessionManager::new(
+            Box::new(SodiumCryptoProvider),
+            generate_identity(&[4u8; 32]),
+        );
         mgr.create_channel_key(1);
         mgr.create_channel_key(2);
         assert!(mgr.remove_channel_key(2));
 
         let state = mgr.export_state().expect("export");
         assert_eq!(
-            state.channel_keys.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            state
+                .channel_keys
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
             vec![1],
             "the revoked key must not be in the exported state"
         );
@@ -763,7 +801,11 @@ mod tests {
             generate_identity(&[4u8; 32]),
         );
         restored.import_state(state).expect("import");
-        assert_eq!(restored.channel_key(2), None, "revocation must survive a restart");
+        assert_eq!(
+            restored.channel_key(2),
+            None,
+            "revocation must survive a restart"
+        );
         assert_eq!(restored.channel_key_ids(), vec![1]);
     }
 
@@ -803,22 +845,42 @@ mod tests {
         let bundle1 = mgr.key_bundle();
         let bundle2 = mgr.key_bundle();
 
-        assert_eq!(bundle1.len(), 169, "bundle includes epoch fields and Gate 1 capability extension");
+        assert_eq!(
+            bundle1.len(),
+            169,
+            "bundle includes epoch fields and Gate 1 capability extension"
+        );
         assert_eq!(bundle2.len(), 169);
         assert_eq!(bundle1[164], CAPABILITY_FORMAT_VERSION);
-        assert_eq!(u32::from_be_bytes(bundle1[165..169].try_into().unwrap()), CAP_MESSAGE_ID_AND_ACK);
+        assert_eq!(
+            u32::from_be_bytes(bundle1[165..169].try_into().unwrap()),
+            CAP_MESSAGE_ID_AND_ACK
+        );
         // Olm identity key (bytes 0..32) and mesh identity keys (64..128)
         // must stay the same across calls -- only the OTK (32..64) rotates.
-        assert_eq!(&bundle1[0..32], &bundle2[0..32], "olm identity key must be stable");
-        assert_eq!(&bundle1[64..128], &bundle2[64..128], "mesh identity keys must be stable");
+        assert_eq!(
+            &bundle1[0..32],
+            &bundle2[0..32],
+            "olm identity key must be stable"
+        );
+        assert_eq!(
+            &bundle1[64..128],
+            &bundle2[64..128],
+            "mesh identity keys must be stable"
+        );
         assert_ne!(
-            &bundle1[32..64], &bundle2[32..64],
+            &bundle1[32..64],
+            &bundle2[32..64],
             "one-time key must rotate between calls, not repeat forever (finding #9)"
         );
         // Epoch number/key (bytes 128..164) must ALSO stay stable across
         // calls within the same session -- key_bundle() should not
         // re-bootstrap a new epoch key every time it's called.
-        assert_eq!(&bundle1[128..164], &bundle2[128..164], "epoch key/number must be stable across key_bundle() calls");
+        assert_eq!(
+            &bundle1[128..164],
+            &bundle2[128..164],
+            "epoch key/number must be stable across key_bundle() calls"
+        );
     }
 
     #[test]
@@ -832,7 +894,10 @@ mod tests {
         for _ in 0..20 {
             let bundle = mgr.key_bundle();
             let otk: [u8; 32] = bundle[32..64].try_into().unwrap();
-            assert!(seen.insert(otk), "one-time key repeated within a single batch");
+            assert!(
+                seen.insert(otk),
+                "one-time key repeated within a single batch"
+            );
         }
     }
 
@@ -842,7 +907,10 @@ mod tests {
     fn test_no_epoch_key_before_bootstrap() {
         let identity = generate_identity(&[1u8; 32]);
         let mgr = SessionManager::new(Box::new(SodiumCryptoProvider), identity);
-        assert!(mgr.epoch_key().is_none(), "fresh SessionManager has no epoch key until key_bundle() or converge_epoch_key() runs");
+        assert!(
+            mgr.epoch_key().is_none(),
+            "fresh SessionManager has no epoch key until key_bundle() or converge_epoch_key() runs"
+        );
     }
 
     #[test]
@@ -850,8 +918,13 @@ mod tests {
         let identity = generate_identity(&[2u8; 32]);
         let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), identity);
         mgr.key_bundle();
-        let (_, epoch) = mgr.epoch_key().expect("key_bundle() must bootstrap an epoch key");
-        assert_eq!(epoch, 0, "a freshly bootstrapped epoch key starts at epoch 0");
+        let (_, epoch) = mgr
+            .epoch_key()
+            .expect("key_bundle() must bootstrap an epoch key");
+        assert_eq!(
+            epoch, 0,
+            "a freshly bootstrapped epoch key starts at epoch 0"
+        );
     }
 
     #[test]
@@ -864,7 +937,11 @@ mod tests {
         let alice_bundle = alice.key_bundle(); // bootstraps Alice's epoch key
         bob.register_peer_keys(&[1u8; 8], &alice_bundle);
 
-        assert_eq!(alice.epoch_key(), bob.epoch_key(), "Bob (no prior key) must adopt Alice's outright");
+        assert_eq!(
+            alice.epoch_key(),
+            bob.epoch_key(),
+            "Bob (no prior key) must adopt Alice's outright"
+        );
     }
 
     #[test]
@@ -888,7 +965,11 @@ mod tests {
         // by ratcheting forward, landing on the EXACT same key, not just
         // adopting a number.
         bob.register_peer_keys(&[1u8; 8], &alice.key_bundle());
-        assert_eq!(alice.epoch_key(), bob.epoch_key(), "Bob must ratchet forward to match Alice's epoch 3 key exactly");
+        assert_eq!(
+            alice.epoch_key(),
+            bob.epoch_key(),
+            "Bob must ratchet forward to match Alice's epoch 3 key exactly"
+        );
     }
 
     #[test]
@@ -908,6 +989,10 @@ mod tests {
         let alice_bundle = alice.key_bundle();
         bob.register_peer_keys(&[2u8; 8], &alice_bundle);
 
-        assert_eq!(bob.epoch_key(), bob_key_before, "Bob must not regress to a peer's older epoch");
+        assert_eq!(
+            bob.epoch_key(),
+            bob_key_before,
+            "Bob must not regress to a peer's older epoch"
+        );
     }
 }

@@ -120,7 +120,11 @@ mod tests {
     fn rfc8032_test_vector_2_single_byte_message() {
         let keypair = keypair_from_seed_and_public(RFC8032_TEST2_SEED, RFC8032_TEST2_PUBLIC);
         let signature = sign(&keypair, &[0x72]);
-        assert_eq!(signature.to_vec(), hex(RFC8032_TEST2_SIG), "one-byte message");
+        assert_eq!(
+            signature.to_vec(),
+            hex(RFC8032_TEST2_SIG),
+            "one-byte message"
+        );
         assert!(verify(&keypair.public_ed25519, &[0x72], &signature));
     }
 

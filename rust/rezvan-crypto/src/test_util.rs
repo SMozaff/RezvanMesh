@@ -8,7 +8,10 @@
 /// fails loudly at the point of the mistake rather than silently producing the
 /// wrong length and failing an assertion somewhere less obvious.
 pub fn hex(s: &str) -> Vec<u8> {
-    assert!(s.len().is_multiple_of(2), "hex string must have even length: {s:?}");
+    assert!(
+        s.len().is_multiple_of(2),
+        "hex string must have even length: {s:?}"
+    );
     (0..s.len())
         .step_by(2)
         .map(|i| {
@@ -20,7 +23,7 @@ pub fn hex(s: &str) -> Vec<u8> {
 
 /// Decode a hex string that must be exactly `N` bytes.
 pub fn hex_array<const N: usize>(s: &str) -> [u8; N] {
-    hex(s).try_into().unwrap_or_else(|v: Vec<u8>| {
-        panic!("expected {N} bytes ({N} hex chars), got {}", v.len())
-    })
+    hex(s)
+        .try_into()
+        .unwrap_or_else(|v: Vec<u8>| panic!("expected {N} bytes ({N} hex chars), got {}", v.len()))
 }

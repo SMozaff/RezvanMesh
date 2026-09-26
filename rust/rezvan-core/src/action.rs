@@ -27,11 +27,18 @@ pub enum Action {
     NotifyUi { decrypted_message: DecryptedMessage },
 
     /// Diagnostic log entry – surfaced to Kotlin for in‑app display.
-    DiagLog { tag: String, level: u8, message: String },
+    DiagLog {
+        tag: String,
+        level: u8,
+        message: String,
+    },
 
     /// A signed, encrypted Gate 1 acknowledgement matched an outbound message.
     /// Kotlin must still match this tuple against a persisted outbound record.
-    MessageAcknowledged { message_id: MessageId, ack_sender: NodeId },
+    MessageAcknowledged {
+        message_id: MessageId,
+        ack_sender: NodeId,
+    },
 }
 
 /// Broadcast sentinel for `Action::SendBlePacket::target` -- send to every
@@ -135,7 +142,10 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             payload.extend_from_slice(data);
             write_action(buf, 3, &payload)
         }
-        Action::UpdateScanInterval { interval_ms, window_ms } => {
+        Action::UpdateScanInterval {
+            interval_ms,
+            window_ms,
+        } => {
             let mut payload = Vec::with_capacity(8);
             payload.extend_from_slice(&interval_ms.to_be_bytes());
             payload.extend_from_slice(&window_ms.to_be_bytes());
@@ -145,10 +155,19 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             let payload = decrypted_message.serialize();
             write_action(buf, 5, &payload)
         }
-        Action::DiagLog { tag, level, message } => {
+        Action::DiagLog {
+            tag,
+            level,
+            message,
+        } => {
             // Truncate rather than drop: a diagnostic is still useful when
             // clipped, and clipping cannot overflow the inner length fields.
-            let tag_bytes: Vec<u8> = tag.as_bytes().iter().copied().take(MAX_DIAG_FIELD).collect();
+            let tag_bytes: Vec<u8> = tag
+                .as_bytes()
+                .iter()
+                .copied()
+                .take(MAX_DIAG_FIELD)
+                .collect();
             let msg_bytes: Vec<u8> = message
                 .as_bytes()
                 .iter()
@@ -163,7 +182,10 @@ fn serialize_one(buf: &mut Vec<u8>, action: &Action) -> bool {
             payload.extend_from_slice(&msg_bytes);
             write_action(buf, 6, &payload)
         }
-        Action::MessageAcknowledged { message_id, ack_sender } => {
+        Action::MessageAcknowledged {
+            message_id,
+            ack_sender,
+        } => {
             let mut payload = Vec::with_capacity(24);
             payload.extend_from_slice(message_id);
             payload.extend_from_slice(ack_sender);
@@ -229,7 +251,10 @@ mod tests {
         let serialized = serialize_actions(&actions);
         assert_eq!(serialized[0], 1);
         assert_eq!(serialized[1], 0x01);
-        assert_eq!(u16::from_be_bytes([serialized[2], serialized[3]]) as usize, size);
+        assert_eq!(
+            u16::from_be_bytes([serialized[2], serialized[3]]) as usize,
+            size
+        );
         assert_eq!(serialized.len(), 1 + 1 + 2 + size);
     }
 
@@ -240,7 +265,9 @@ mod tests {
     #[test]
     fn advertisement_payload_is_exactly_the_wire_size() {
         for input in [0usize, 1, 23, 24, 25, 31, 64] {
-            let actions = vec![Action::SendBleAdvertisement { data: vec![0x5A; input] }];
+            let actions = vec![Action::SendBleAdvertisement {
+                data: vec![0x5A; input],
+            }];
             let serialized = serialize_actions(&actions);
             let declared = u16::from_be_bytes([serialized[2], serialized[3]]) as usize;
             let expected = rezvan_common::AdvBeaconExt::SIZE;
@@ -342,7 +369,10 @@ mod tests {
         let mut offset = 1usize;
         let mut out = Vec::new();
         for _ in 0..count {
-            assert!(offset + 3 <= frame.len(), "truncated action header at {offset}");
+            assert!(
+                offset + 3 <= frame.len(),
+                "truncated action header at {offset}"
+            );
             let ty = frame[offset];
             let len = ((frame[offset + 1] as usize) << 8) | frame[offset + 2] as usize;
             offset += 3;
@@ -372,7 +402,11 @@ mod tests {
         let frame = serialize_actions(&actions);
         let (parsed, consumed) = parse_frame(&frame);
 
-        assert_eq!(consumed, frame.len(), "frame walk must consume the whole frame");
+        assert_eq!(
+            consumed,
+            frame.len(),
+            "frame walk must consume the whole frame"
+        );
         assert_eq!(parsed.len(), 1);
         let (ty, payload) = &parsed[0];
         assert_eq!(*ty, 0x06);
@@ -405,8 +439,14 @@ mod tests {
             content: b"important".to_vec(),
         };
         let actions = vec![
-            Action::DiagLog { tag: "RUST".into(), level: 1, message: "rejected something".into() },
-            Action::NotifyUi { decrypted_message: msg.clone() },
+            Action::DiagLog {
+                tag: "RUST".into(),
+                level: 1,
+                message: "rejected something".into(),
+            },
+            Action::NotifyUi {
+                decrypted_message: msg.clone(),
+            },
         ];
         let frame = serialize_actions(&actions);
         let (parsed, consumed) = parse_frame(&frame);
@@ -430,7 +470,10 @@ mod tests {
                 target: [0x11; 8],
                 data: vec![0xAA; MAX_ACTION_PAYLOAD],
             },
-            Action::MessageAcknowledged { message_id: [0x01; 16], ack_sender: [0x22; 8] },
+            Action::MessageAcknowledged {
+                message_id: [0x01; 16],
+                ack_sender: [0x22; 8],
+            },
         ];
         let frame = serialize_actions(&actions);
         let (parsed, consumed) = parse_frame(&frame);
@@ -451,7 +494,10 @@ mod tests {
     #[test]
     fn an_over_long_action_list_is_capped_at_the_count_field_limit() {
         let many = vec![
-            Action::UpdateScanInterval { interval_ms: 1, window_ms: 1 };
+            Action::UpdateScanInterval {
+                interval_ms: 1,
+                window_ms: 1
+            };
             MAX_ACTIONS_PER_FRAME + 10
         ];
         let frame = serialize_actions(&many);
@@ -466,12 +512,20 @@ mod tests {
     #[test]
     fn oversized_diaglog_strings_are_truncated_not_dropped() {
         let huge = "x".repeat(MAX_DIAG_FIELD * 4);
-        let actions = vec![Action::DiagLog { tag: "T".into(), level: 2, message: huge }];
+        let actions = vec![Action::DiagLog {
+            tag: "T".into(),
+            level: 2,
+            message: huge,
+        }];
         let frame = serialize_actions(&actions);
         let (parsed, consumed) = parse_frame(&frame);
 
         assert_eq!(consumed, frame.len());
-        assert_eq!(parsed.len(), 1, "a diagnostic must never be dropped entirely");
+        assert_eq!(
+            parsed.len(),
+            1,
+            "a diagnostic must never be dropped entirely"
+        );
         let payload = &parsed[0].1;
         let tag_len = ((payload[1] as usize) << 8) | payload[2] as usize;
         let msg_len_at = 3 + tag_len;

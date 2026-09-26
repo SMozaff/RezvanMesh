@@ -144,7 +144,12 @@ mod tests {
         let tag_from_bob = compute_tag(&bob.private_x25519, &alice.public_x25519, msg);
 
         assert_eq!(tag_from_alice, tag_from_bob, "ECDH must be symmetric");
-        assert!(verify_tag(&bob.private_x25519, &alice.public_x25519, msg, &tag_from_alice));
+        assert!(verify_tag(
+            &bob.private_x25519,
+            &alice.public_x25519,
+            msg,
+            &tag_from_alice
+        ));
     }
 
     #[test]
@@ -157,7 +162,12 @@ mod tests {
         let tag_from_alice = compute_tag(&alice.private_x25519, &bob.public_x25519, msg);
 
         // Bob verifying against Mallory's key (wrong claimed sender) must fail.
-        assert!(!verify_tag(&bob.private_x25519, &mallory.public_x25519, msg, &tag_from_alice));
+        assert!(!verify_tag(
+            &bob.private_x25519,
+            &mallory.public_x25519,
+            msg,
+            &tag_from_alice
+        ));
     }
 
     #[test]
@@ -166,7 +176,12 @@ mod tests {
         let bob = generate_identity(&[2u8; 32]);
 
         let tag = compute_tag(&alice.private_x25519, &bob.public_x25519, b"original");
-        assert!(!verify_tag(&bob.private_x25519, &alice.public_x25519, b"tampered!", &tag));
+        assert!(!verify_tag(
+            &bob.private_x25519,
+            &alice.public_x25519,
+            b"tampered!",
+            &tag
+        ));
     }
 
     // --- known-answer test ---------------------------------------------------
@@ -191,6 +206,11 @@ mod tests {
             crate::test_util::hex(EXPECTED_TAG),
             "beacon MAC derivation changed; peers would stop authenticating each other"
         );
-        assert!(verify_tag(&a_private, &b_public, message, &crate::test_util::hex_array::<7>(EXPECTED_TAG)));
+        assert!(verify_tag(
+            &a_private,
+            &b_public,
+            message,
+            &crate::test_util::hex_array::<7>(EXPECTED_TAG)
+        ));
     }
 }

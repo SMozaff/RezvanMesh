@@ -1,4 +1,4 @@
-use rezvan_common::{AdvBeaconExt, NeighborInfo, NodeId, OGMPayload, MeshPacketHeader};
+use rezvan_common::{AdvBeaconExt, MeshPacketHeader, NeighborInfo, NodeId, OGMPayload};
 use std::collections::{HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,8 @@ impl RoutingTable {
     /// separate from the replay-rejection tracking used by
     /// `process_beacon`/`process_ogm`.
     pub fn seen_and_record(&mut self, originator: NodeId, sequence: u32) -> bool {
-        self.relayed_seen_last_tick.insert(originator, self.current_tick);
+        self.relayed_seen_last_tick
+            .insert(originator, self.current_tick);
         let set = self.relayed_seen.entry(originator).or_default();
         !set.insert(sequence)
     }
@@ -218,8 +219,10 @@ impl RoutingTable {
                 return false; // stale or replayed
             }
         }
-        self.last_beacon_seq.insert(beacon.originator, beacon.sequence);
-        self.replay_last_seen_tick.insert(beacon.originator, self.current_tick);
+        self.last_beacon_seq
+            .insert(beacon.originator, beacon.sequence);
+        self.replay_last_seen_tick
+            .insert(beacon.originator, self.current_tick);
 
         let lq = rssi_to_lq(rssi);
         if lq == 0 {
@@ -423,8 +426,10 @@ impl RoutingTable {
             return false;
         }
 
-        self.last_packet_seq.insert(header.originator, header.sequence);
-        self.replay_last_seen_tick.insert(header.originator, self.current_tick);
+        self.last_packet_seq
+            .insert(header.originator, header.sequence);
+        self.replay_last_seen_tick
+            .insert(header.originator, self.current_tick);
 
         let battery_weight = 1.0;
         let hop_penalty = compute_hop_penalty(lq, battery_weight);
@@ -845,7 +850,11 @@ mod tests {
             table.advance_tick();
         }
         table.purge_stale(1_000_000);
-        assert_eq!(table.tracked_originators(), 20, "a 20-node mesh must be untouched");
+        assert_eq!(
+            table.tracked_originators(),
+            20,
+            "a 20-node mesh must be untouched"
+        );
         for i in 1..=20u8 {
             let peer = [2u8, 0, 0, 0, 0, 0, 0, i];
             assert!(
@@ -1018,7 +1027,10 @@ mod tests {
 
         let metric_a = table.get_best_route(&peer_a).unwrap().metric;
         let metric_b = table.get_best_route(&peer_b).unwrap().metric;
-        assert!(metric_a < metric_b, "low-battery peer should have worse metric");
+        assert!(
+            metric_a < metric_b,
+            "low-battery peer should have worse metric"
+        );
     }
 
     // --- process_ogm tests (MeshPacketHeader-based, not yet wired in engine) -
@@ -1076,7 +1088,10 @@ mod tests {
             table.advance_tick();
         }
         table.purge_stale(120);
-        assert!(table.get_best_route(&peer).is_none(), "stale route should be purged");
+        assert!(
+            table.get_best_route(&peer).is_none(),
+            "stale route should be purged"
+        );
     }
 
     #[test]
@@ -1090,7 +1105,10 @@ mod tests {
             table.advance_tick();
         }
         table.purge_stale(120);
-        assert!(table.get_best_route(&peer).is_some(), "recent route should survive purge");
+        assert!(
+            table.get_best_route(&peer).is_some(),
+            "recent route should survive purge"
+        );
     }
 
     #[test]
@@ -1107,7 +1125,10 @@ mod tests {
             table.advance_tick();
         }
         table.purge_stale(120);
-        assert!(table.get_best_route(&peer).is_none(), "route should be purged");
+        assert!(
+            table.get_best_route(&peer).is_none(),
+            "route should be purged"
+        );
 
         // Old/replayed sequence must still be rejected even though the
         // route was purged -- replay tracking outlives route liveness.
@@ -1164,6 +1185,9 @@ mod tests {
             table.advance_tick();
         }
         table.purge_stale(120);
-        assert!(table.get_best_route(&peer).is_some(), "refreshed route should survive");
+        assert!(
+            table.get_best_route(&peer).is_some(),
+            "refreshed route should survive"
+        );
     }
 }

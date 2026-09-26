@@ -315,7 +315,10 @@ mod tests {
             loaded.routing.last_beacon_seq, state.routing.last_beacon_seq,
             "replay-sequence history must survive a restart or old beacons become replayable"
         );
-        assert_eq!(loaded.routing.last_packet_seq, state.routing.last_packet_seq);
+        assert_eq!(
+            loaded.routing.last_packet_seq,
+            state.routing.last_packet_seq
+        );
         assert_eq!(loaded.routing.current_tick, state.routing.current_tick);
         assert_eq!(loaded.routing.relayed_seen, state.routing.relayed_seen);
 

@@ -6,12 +6,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 
-mod engine;
-mod routing;
-mod power;
-mod session;
 mod action;
+mod engine;
 mod persistence;
+mod power;
+mod routing;
+mod session;
 
 use engine::MeshEngine;
 
@@ -102,15 +102,16 @@ fn jbytearray_to_vec(env: &mut JNIEnv, array: &JByteArray) -> Result<Vec<u8>, St
     let size = env.get_array_length(array).map_err(|e| e.to_string())? as usize;
     let mut buf = vec![0u8; size];
     // JNI get_byte_array_region expects &mut [i8]; transmute the Vec<u8> buffer
-    let buf_slice = unsafe {
-        std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut i8, size)
-    };
+    let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut i8, size) };
     env.get_byte_array_region(array, 0, buf_slice)
         .map_err(|e| e.to_string())?;
     Ok(buf)
 }
 
-fn jbytearray_to_array<const N: usize>(env: &mut JNIEnv, array: &JByteArray) -> Result<[u8; N], String> {
+fn jbytearray_to_array<const N: usize>(
+    env: &mut JNIEnv,
+    array: &JByteArray,
+) -> Result<[u8; N], String> {
     let bytes = jbytearray_to_vec(env, array)?;
     if bytes.len() != N {
         return Err(format!("expected {} bytes, got {}", N, bytes.len()));
@@ -259,7 +260,6 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeTick(
     _class: JClass,
     core_ptr: jlong,
 ) -> jbyteArray {
-
     let actions = match with_engine(core_ptr, |engine| engine.tick()) {
         Some(actions) => actions,
         None => return std::ptr::null_mut(),
@@ -282,7 +282,6 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendMessage(
     plaintext: JByteArray,
     message_type: jint,
 ) -> jbyteArray {
-
     let recipient = match jbytearray_to_array::<8>(&mut env, &recipient_id) {
         Ok(r) => r,
         Err(e) => {
@@ -299,7 +298,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendMessage(
         }
     };
 
-    let actions = match with_engine(core_ptr, |engine| engine.send_message(&recipient, &plain, message_type as u8)) {
+    let actions = match with_engine(core_ptr, |engine| {
+        engine.send_message(&recipient, &plain, message_type as u8)
+    }) {
         Some(actions) => actions,
         None => return std::ptr::null_mut(),
     };
@@ -353,13 +354,15 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendMessageV1(
             return std::ptr::null_mut();
         }
     };
-    let actions = match with_engine(core_ptr, |engine| engine.send_message_v1(
-        &recipient,
-        message_id,
-        created_at_ms.max(0) as u64,
-        message_kind as u8,
-        &body,
-    )) {
+    let actions = match with_engine(core_ptr, |engine| {
+        engine.send_message_v1(
+            &recipient,
+            message_id,
+            created_at_ms.max(0) as u64,
+            message_kind as u8,
+            &body,
+        )
+    }) {
         Some(actions) => actions,
         None => return std::ptr::null_mut(),
     };
@@ -395,7 +398,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeBuildMessageReceivedAck(
             return std::ptr::null_mut();
         }
     };
-    let actions = match with_engine(core_ptr, |engine| engine.build_received_ack(&original_sender, message_id, created_at_ms.max(0) as u64)) {
+    let actions = match with_engine(core_ptr, |engine| {
+        engine.build_received_ack(&original_sender, message_id, created_at_ms.max(0) as u64)
+    }) {
         Some(actions) => actions,
         None => return std::ptr::null_mut(),
     };
@@ -413,7 +418,6 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendBroadcast(
     core_ptr: jlong,
     message: JByteArray,
 ) -> jbyteArray {
-
     let plain = match jbytearray_to_vec(&mut env, &message) {
         Ok(p) => p,
         Err(e) => {
@@ -498,7 +502,8 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeRegisterPeerKeys(
         Ok(b) => b,
         Err(_) => return 0,
     };
-    with_engine(core_ptr, |engine| engine.register_peer_keys(&peer, &b)).unwrap_or(false) as jboolean
+    with_engine(core_ptr, |engine| engine.register_peer_keys(&peer, &b)).unwrap_or(false)
+        as jboolean
 }
 
 /// Creates a new random shared key for a channel (called when the local
@@ -512,7 +517,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeCreateChannelKey(
     core_ptr: jlong,
     channel_id: jint,
 ) -> jbyteArray {
-    let key = match with_engine(core_ptr, |engine| engine.create_channel_key(channel_id as u32)) {
+    let key = match with_engine(core_ptr, |engine| {
+        engine.create_channel_key(channel_id as u32)
+    }) {
         Some(key) => key,
         None => return std::ptr::null_mut(),
     };
@@ -533,7 +540,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSetChannelKey(
         Ok(k) => k,
         Err(_) => return 0,
     };
-    with_engine(core_ptr, |engine| engine.set_channel_key(channel_id as u32, k));
+    with_engine(core_ptr, |engine| {
+        engine.set_channel_key(channel_id as u32, k)
+    });
     1
 }
 
@@ -550,8 +559,10 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeRemoveChannelKey(
     core_ptr: jlong,
     channel_id: jint,
 ) -> jboolean {
-    with_engine(core_ptr, |engine| engine.remove_channel_key(channel_id as u32)).unwrap_or(false)
-        as jboolean
+    with_engine(core_ptr, |engine| {
+        engine.remove_channel_key(channel_id as u32)
+    })
+    .unwrap_or(false) as jboolean
 }
 
 /// Channel ids the engine currently holds a sender key for, as a packed
@@ -593,7 +604,6 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendChannelMessage(
     channel_id: jint,
     message: JByteArray,
 ) -> jbyteArray {
-
     let plain = match jbytearray_to_vec(&mut env, &message) {
         Ok(p) => p,
         Err(e) => {
@@ -602,7 +612,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSendChannelMessage(
         }
     };
 
-    let actions = match with_engine(core_ptr, |engine| engine.send_channel_message(channel_id as u32, &plain)) {
+    let actions = match with_engine(core_ptr, |engine| {
+        engine.send_channel_message(channel_id as u32, &plain)
+    }) {
         Some(actions) => actions,
         None => return std::ptr::null_mut(),
     };
@@ -644,7 +656,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSetPowerOverride(
     core_ptr: jlong,
     state: jint,
 ) {
-    with_engine(core_ptr, |engine| engine.set_user_override(power_state_from_i32(state)));
+    with_engine(core_ptr, |engine| {
+        engine.set_user_override(power_state_from_i32(state))
+    });
 }
 
 #[no_mangle]
@@ -664,7 +678,9 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeUpdateBattery(
     level_percent: jint,
     is_charging: jboolean,
 ) {
-    with_engine(core_ptr, |engine| engine.update_battery(level_percent as u8, is_charging != 0));
+    with_engine(core_ptr, |engine| {
+        engine.update_battery(level_percent as u8, is_charging != 0)
+    });
 }
 
 #[no_mangle]

@@ -1,6 +1,6 @@
 // rezvan-common/src/lib.rs
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 pub type NodeId = [u8; 8];
 pub type MessageId = [u8; 16];
@@ -65,7 +65,12 @@ impl DirectMessageEnvelopeV1 {
         }
         let body = data[32..].to_vec();
         std::str::from_utf8(&body).ok()?;
-        Some(Self { message_kind: 0, message_id, created_at_ms, body })
+        Some(Self {
+            message_kind: 0,
+            message_id,
+            created_at_ms,
+            body,
+        })
     }
 }
 
@@ -94,8 +99,11 @@ impl MessageAckEnvelopeV1 {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() != Self::SIZE || data[0..2] != ACK_ENVELOPE_MAGIC ||
-            data[2] != ACK_ENVELOPE_VERSION || data[3] != ACK_CODE_RECEIVED {
+        if data.len() != Self::SIZE
+            || data[0..2] != ACK_ENVELOPE_MAGIC
+            || data[2] != ACK_ENVELOPE_VERSION
+            || data[3] != ACK_CODE_RECEIVED
+        {
             return None;
         }
         let mut message_id = [0u8; 16];
@@ -108,7 +116,12 @@ impl MessageAckEnvelopeV1 {
         let mut original_recipient = [0u8; 8];
         original_recipient.copy_from_slice(&data[28..36]);
         let created_at_ms = u64::from_be_bytes(data[36..44].try_into().ok()?);
-        Some(Self { message_id, original_sender, original_recipient, created_at_ms })
+        Some(Self {
+            message_id,
+            original_sender,
+            original_recipient,
+            created_at_ms,
+        })
     }
 }
 
@@ -184,7 +197,9 @@ impl MeshPacketHeader {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() < Self::SIZE { return None; }
+        if data.len() < Self::SIZE {
+            return None;
+        }
         let version = data[0];
         let packet_type = data[1];
         let ttl = data[2];
@@ -197,7 +212,17 @@ impl MeshPacketHeader {
         let mut next_hop = [0u8; 8];
         next_hop.copy_from_slice(&data[24..32]);
         let payload_len = u16::from_be_bytes([data[32], data[33]]);
-        Some(Self { version, packet_type, ttl, originator, destination, sequence, hop_count, next_hop, payload_len })
+        Some(Self {
+            version,
+            packet_type,
+            ttl,
+            originator,
+            destination,
+            sequence,
+            hop_count,
+            next_hop,
+            payload_len,
+        })
     }
 }
 
@@ -228,17 +253,27 @@ impl OGMPayload {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() < Self::SIZE { return None; }
-        let timestamp = u64::from_be_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]);
+        if data.len() < Self::SIZE {
+            return None;
+        }
+        let timestamp = u64::from_be_bytes([
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        ]);
         let link_quality = data[8];
         let path_metric = u32::from_be_bytes([data[9], data[10], data[11], data[12]]);
         let neighbor_count = data[13];
         let mut neighbors = [NeighborInfo::default(); 9];
         for (i, neighbor) in neighbors.iter_mut().enumerate() {
             let off = 14 + i * 4;
-            *neighbor = NeighborInfo::deserialize(&data[off..off+4])?;
+            *neighbor = NeighborInfo::deserialize(&data[off..off + 4])?;
         }
-        Some(Self { timestamp, link_quality, path_metric, neighbor_count, neighbors })
+        Some(Self {
+            timestamp,
+            link_quality,
+            path_metric,
+            neighbor_count,
+            neighbors,
+        })
     }
 }
 
@@ -257,11 +292,16 @@ impl NeighborInfo {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() < 4 { return None; }
+        if data.len() < 4 {
+            return None;
+        }
         let mut node_id_prefix = [0u8; 3];
         node_id_prefix.copy_from_slice(&data[0..3]);
         let link_quality = data[3];
-        Some(Self { node_id_prefix, link_quality })
+        Some(Self {
+            node_id_prefix,
+            link_quality,
+        })
     }
 }
 
@@ -298,15 +338,21 @@ impl DecryptedMessage {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() < 16 + 8 + 8 + 1 + 4 { return None; }
+        if data.len() < 16 + 8 + 8 + 1 + 4 {
+            return None;
+        }
         let mut conversation_id = [0u8; 16];
         conversation_id.copy_from_slice(&data[0..16]);
         let mut sender_id = [0u8; 8];
         sender_id.copy_from_slice(&data[16..24]);
-        let timestamp = u64::from_be_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]);
+        let timestamp = u64::from_be_bytes([
+            data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
+        ]);
         let message_type = data[32];
         let content_len = u32::from_be_bytes([data[33], data[34], data[35], data[36]]) as usize;
-        if data.len() < 37 + content_len + 1 { return None; }
+        if data.len() < 37 + content_len + 1 {
+            return None;
+        }
         let content_end = 37 + content_len;
         let content = data[37..content_end].to_vec();
         let id_present = data[content_end];
@@ -319,7 +365,14 @@ impl DecryptedMessage {
             }
             _ => return None,
         };
-        Some(Self { conversation_id, sender_id, timestamp, message_type, protocol_message_id, content })
+        Some(Self {
+            conversation_id,
+            sender_id,
+            timestamp,
+            message_type,
+            protocol_message_id,
+            content,
+        })
     }
 }
 
@@ -401,9 +454,9 @@ impl AdvBeaconExt {
     /// Length of the signed/MAC'd portion (everything before the MAC field).
     pub const SIGNED_LEN: usize = 17;
 
-    pub const FLAG_CHARGING:    u8 = 0b0000_0001;
+    pub const FLAG_CHARGING: u8 = 0b0000_0001;
     pub const FLAG_WIFI_DIRECT: u8 = 0b0000_0010;
-    pub const FLAG_VOICE:       u8 = 0b0000_0100;
+    pub const FLAG_VOICE: u8 = 0b0000_0100;
 
     pub fn serialize(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Self::SIZE);
@@ -433,34 +486,46 @@ impl AdvBeaconExt {
     }
 
     pub fn deserialize(data: &[u8]) -> Option<Self> {
-        if data.len() < Self::SIZE { return None; }
+        if data.len() < Self::SIZE {
+            return None;
+        }
         // Reject version mismatches here, at the source, rather than relying
         // on every caller to remember to check `version` themselves after
         // deserializing (this review's finding #4: engine.rs happened to
         // check it correctly, but nothing enforced that convention for the
         // next caller who might not know to).
-        if data[0] != Self::VERSION { return None; }
-        if data[1] != 0x01 { return None; }
+        if data[0] != Self::VERSION {
+            return None;
+        }
+        if data[1] != 0x01 {
+            return None;
+        }
         let mut originator = [0u8; 8];
         originator.copy_from_slice(&data[2..10]);
         let sequence = u32::from_be_bytes([data[10], data[11], data[12], data[13]]);
         let mut mac = [0u8; 7];
         mac.copy_from_slice(&data[17..24]);
         Some(Self {
-            version:     data[0],
+            version: data[0],
             packet_type: data[1],
             originator,
             sequence,
-            battery:     data[14],
+            battery: data[14],
             power_state: data[15],
-            node_flags:  data[16],
+            node_flags: data[16],
             mac,
         })
     }
 
-    pub fn is_charging(&self)      -> bool { self.node_flags & Self::FLAG_CHARGING    != 0 }
-    pub fn has_wifi_direct(&self)  -> bool { self.node_flags & Self::FLAG_WIFI_DIRECT != 0 }
-    pub fn is_voice_capable(&self) -> bool { self.node_flags & Self::FLAG_VOICE       != 0 }
+    pub fn is_charging(&self) -> bool {
+        self.node_flags & Self::FLAG_CHARGING != 0
+    }
+    pub fn has_wifi_direct(&self) -> bool {
+        self.node_flags & Self::FLAG_WIFI_DIRECT != 0
+    }
+    pub fn is_voice_capable(&self) -> bool {
+        self.node_flags & Self::FLAG_VOICE != 0
+    }
 }
 
 // COMPILE-TIME GUARD: if anyone changes AdvBeaconExt fields this will refuse
@@ -475,9 +540,15 @@ mod tests {
     #[test]
     fn test_header_size_constant_matches_serialization() {
         let hdr = MeshPacketHeader {
-            version: 1, packet_type: 1, ttl: 1,
-            originator: [0; 8], destination: [0; 8], sequence: 0, hop_count: 0,
-            next_hop: [0; 8], payload_len: 0,
+            version: 1,
+            packet_type: 1,
+            ttl: 1,
+            originator: [0; 8],
+            destination: [0; 8],
+            sequence: 0,
+            hop_count: 0,
+            next_hop: [0; 8],
+            payload_len: 0,
         };
         assert_eq!(hdr.serialize().len(), MeshPacketHeader::SIZE);
     }
@@ -590,7 +661,9 @@ mod tests {
             message_id: [1; 16],
             created_at_ms: 1,
             body: b"x".to_vec(),
-        }.serialize().unwrap();
+        }
+        .serialize()
+        .unwrap();
         wire[31] = 2;
         assert!(DirectMessageEnvelopeV1::deserialize(&wire).is_none());
     }
@@ -685,4 +758,4 @@ mod tests {
             let _ = AdvBeaconExt::deserialize(&bytes);
         }
     }
-    }
+}

@@ -188,7 +188,10 @@ mod tests {
         let k5 = ratchet_forward(&k4);
 
         let alice_derived_k5 = advance_to(&k2, 2, 5).unwrap();
-        assert_eq!(alice_derived_k5, k5, "Alice must converge to Bob's epoch 5 key");
+        assert_eq!(
+            alice_derived_k5, k5,
+            "Alice must converge to Bob's epoch 5 key"
+        );
     }
 
     #[test]
@@ -247,7 +250,11 @@ mod tests {
         const NEXT2: &str = "c885a6683bead167fb3487e3f3465794448d40680cadec2658caa1cce4d64059";
 
         let first = ratchet_forward(&crate::test_util::hex_array::<32>(EPOCH_1));
-        assert_eq!(first.to_vec(), crate::test_util::hex(NEXT), "ratchet step 1 changed");
+        assert_eq!(
+            first.to_vec(),
+            crate::test_util::hex(NEXT),
+            "ratchet step 1 changed"
+        );
         assert_eq!(
             ratchet_forward(&first).to_vec(),
             crate::test_util::hex(NEXT2),
