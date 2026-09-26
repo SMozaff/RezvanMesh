@@ -239,7 +239,7 @@ jobs:
           cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release --locked -p rezvan-core
 
       - name: Run Android JVM unit tests
-        run: ./gradlew :android:app:testDebugUnitTest --stacktrace
+        run: ./gradlew :android:app:testDebugUnitTest --stacktrace --warning-mode all
 
       - name: Upload Android unit-test reports
         if: always()
@@ -250,7 +250,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --warning-mode all
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7
