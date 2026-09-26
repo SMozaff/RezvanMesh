@@ -30,7 +30,13 @@ object PowerProfileManager {
     }
 
     fun cancelVibrations(context: Context?) {
-        val vibrator = context?.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (context == null) return
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            context.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        }
         vibrator?.cancel()
     }
 
