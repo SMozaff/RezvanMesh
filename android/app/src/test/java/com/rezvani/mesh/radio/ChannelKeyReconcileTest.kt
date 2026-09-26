@@ -169,6 +169,6 @@ class ChannelKeyReconcileTest {
         val engineAfterRestart = RezvanRadioService.decodeChannelKeyIds(pack(1))
         val database = setOf(1, 5)
         assertEquals(emptyList<Int>(), RezvanRadioService.channelsToRevoke(engineAfterRestart, database))
-        assertTrue(5 !in engineAfterRestart, "5 is new; it gets installed by the caller")
+        assertTrue("5 is new; it gets installed by the caller", 5 !in engineAfterRestart)
     }
 }
