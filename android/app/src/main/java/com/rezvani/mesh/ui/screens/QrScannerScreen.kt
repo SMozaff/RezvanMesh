@@ -4,7 +4,6 @@ package com.rezvani.mesh.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
