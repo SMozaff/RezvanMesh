@@ -84,7 +84,7 @@ impl MeshEngine {
         // See RoutingTable::purge_stale docs for the ticks-vs-wall-clock
         // caveat and the replay-protection tradeoff this implies.
         const STALE_ROUTE_MAX_AGE_TICKS: u64 = 120;
-        if self.adv_sequence % 30 == 0 {
+        if self.adv_sequence.is_multiple_of(30) {
             self.routing.purge_stale(STALE_ROUTE_MAX_AGE_TICKS);
         }
 
@@ -98,7 +98,7 @@ impl MeshEngine {
         // KeyAnnouncement declares (see SessionManager::converge_epoch_key),
         // not by all advancing in lockstep.
         const EPOCH_ADVANCE_TICKS: u32 = 21_600;
-        if self.adv_sequence % EPOCH_ADVANCE_TICKS == 0 {
+        if self.adv_sequence.is_multiple_of(EPOCH_ADVANCE_TICKS) {
             self.sessions.advance_epoch();
         }
 
@@ -110,7 +110,7 @@ impl MeshEngine {
         let ogm_interval = crate::power::get_ogm_interval_secs(state).max(1);
         let seq = self.adv_sequence as u64;
 
-        if seq % ogm_interval == 0 {
+        if seq.is_multiple_of(ogm_interval) {
             actions.push(Action::SendBleAdvertisement {
                 data: self.build_advertisement(),
             });
@@ -119,7 +119,7 @@ impl MeshEngine {
         // KeyAnnouncement every 3rd beacon (bundle now 164 bytes -- includes
         // mesh identity keys plus the network-wide beacon epoch key/number,
         // see rezvan_crypto::epoch_key) so peers can verify our beacon MACs and packet sigs).
-        if seq % (ogm_interval * 3) == 0 {
+        if seq.is_multiple_of(ogm_interval * 3) {
             let bundle = self.sessions.key_bundle();
             let packet = self.build_signed_packet(0x05, 1, &[0u8; 8], &bundle);
             actions.push(Action::SendBlePacket {
@@ -141,7 +141,7 @@ impl MeshEngine {
         // aware cadence already tuned to trade discovery freshness for
         // battery cost, so it's the natural budget to share rather than
         // adding a second, uncoordinated source of periodic radio traffic.
-        if seq % ogm_interval == 0 {
+        if seq.is_multiple_of(ogm_interval) {
             self.ogm_sequence = self.ogm_sequence.wrapping_add(1);
             let mut signed_bytes = self.routing.build_ogm(self.ogm_sequence);
             let identity = self.sessions.identity();
@@ -190,7 +190,7 @@ impl MeshEngine {
                         message: format!(
                             "deserialize FAILED len={} first_bytes={:02x?}",
                             raw_packet.len(),
-                            &raw_packet
+                            raw_packet
                                 .get(..8.min(raw_packet.len()))
                                 .unwrap_or(raw_packet)
                         ),
@@ -259,13 +259,11 @@ impl MeshEngine {
         // An exact check is safe for the relay path: `build_relay_action`
         // copies `payload_len` and the payload unchanged (and only mutates
         // ttl/hop_count for unsigned 0x02), so the total length is preserved.
-        let expected_len = payload_end
-            .checked_add(if needs_sig {
-                MESH_PACKET_SIGNATURE_LEN
-            } else {
-                0
-            })
-            .unwrap_or(usize::MAX);
+        let expected_len = payload_end.saturating_add(if needs_sig {
+            MESH_PACKET_SIGNATURE_LEN
+        } else {
+            0
+        });
         if raw_packet.len() != expected_len {
             return (
                 None,
@@ -1033,6 +1031,7 @@ impl MeshEngine {
     /// The shared key for `channel_id`, if we hold one. `None` after a restart
     /// that failed to restore state, or for a channel we never created/joined
     /// or have since left.
+    #[cfg(test)]
     pub fn channel_key(&self, channel_id: u32) -> Option<[u8; 32]> {
         self.sessions.channel_key(channel_id)
     }
@@ -1235,7 +1234,7 @@ mod tests {
         // Mallory forge beacon MACs "from" Alice and hijack anything
         // addressed to Alice's NodeId.
         let mut alice = make_engine(1);
-        let mut mallory = make_engine(3);
+        let mallory = make_engine(3);
 
         let bundle = mallory.key_bundle(); // Mallory's OWN keys
                                            // Splice: build the packet as if Mallory sent it, but with the
