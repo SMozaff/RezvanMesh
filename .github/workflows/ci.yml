@@ -47,20 +47,12 @@ jobs:
         run: |
           set -o pipefail
           cargo fmt --all -- --check 2>&1 | tee /tmp/gate-fmt.txt
-        # Non-blocking for now: the codebase predates a fmt pass and hasn't
-        # been normalized yet. Flip this to a hard failure once it has.
-        continue-on-error: true
 
       - name: Clippy (all crates, all targets)
         working-directory: rust
         run: |
           set -o pipefail
           cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee /tmp/gate-clippy.txt
-        # Non-blocking for now: there is a pre-existing set of style-only
-        # clippy warnings (see the PR/commit that introduced this workflow
-        # for the baseline count). Once that baseline is cleaned up, remove
-        # continue-on-error so new warnings fail CI.
-        continue-on-error: true
 
       # -------------------------------------------------------------------
       # Make the two non-blocking gates above *measurable*.
