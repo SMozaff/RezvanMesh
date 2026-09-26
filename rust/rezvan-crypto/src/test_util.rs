@@ -8,7 +8,7 @@
 /// fails loudly at the point of the mistake rather than silently producing the
 /// wrong length and failing an assertion somewhere less obvious.
 pub fn hex(s: &str) -> Vec<u8> {
-    assert!(s.len() % 2 == 0, "hex string must have even length: {s:?}");
+    assert!(s.len().is_multiple_of(2), "hex string must have even length: {s:?}");
     (0..s.len())
         .step_by(2)
         .map(|i| {
