@@ -133,6 +133,7 @@ impl RoutingTable {
     }
 
     /// Read the logical clock without needing `&mut self`.
+    #[cfg(test)]
     pub fn current_tick_value(&self) -> u64 {
         self.current_tick
     }
@@ -141,6 +142,7 @@ impl RoutingTable {
     ///
     /// Exposed for tests and diagnostics; production code reaches the same
     /// information via `routing_snapshot`.
+    #[cfg(test)]
     pub fn tracked_originators(&self) -> usize {
         self.replay_last_seen_tick.len()
     }
@@ -278,7 +280,7 @@ impl RoutingTable {
             link_quality: lq,
             last_seen_tick: self.current_tick,
         });
-        entries.sort_by(|a, b| a.metric.cmp(&b.metric));
+        entries.sort_by_key(|a| a.metric);
         entries.truncate(3);
 
         true
@@ -294,6 +296,7 @@ impl RoutingTable {
     }
 
     /// Return all known routes for a destination (up to 3).
+    #[cfg(test)]
     pub fn get_routes(&self, dest: &NodeId) -> &[RouteEntry] {
         self.routes.get(dest).map(|v| v.as_slice()).unwrap_or(&[])
     }
@@ -456,7 +459,7 @@ impl RoutingTable {
             link_quality: lq,
             last_seen_tick: self.current_tick,
         });
-        entries.sort_by(|a, b| a.metric.cmp(&b.metric));
+        entries.sort_by_key(|a| a.metric);
         entries.truncate(3);
 
         true
@@ -740,6 +743,7 @@ pub fn compute_hop_penalty(lq: u8, battery_weight: f32) -> u32 {
 }
 
 /// Compute the route length penalty (discourages excessively long paths).
+#[cfg(test)]
 pub fn route_length_penalty(hop_count: u8) -> u32 {
     100 * (hop_count.saturating_sub(1) as f32).powf(1.5) as u32
 }
