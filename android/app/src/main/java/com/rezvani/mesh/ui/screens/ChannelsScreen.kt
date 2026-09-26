@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -18,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rezvani.mesh.R
 import com.rezvani.mesh.data.entities.ChannelEntity
+import com.rezvani.mesh.ui.components.ConfirmationDialog
 import com.rezvani.mesh.ui.components.PasswordInputDialog
 import com.rezvani.mesh.ui.viewmodel.ChannelsViewModel
 
@@ -34,6 +36,7 @@ fun ChannelsScreen(
     var selectedChannel by remember { mutableStateOf<ChannelEntity?>(null) }
     var showPasswordDialog by remember { mutableStateOf(false) }
     var showJoinError by remember { mutableStateOf(false) }
+    var channelToLeave by remember { mutableStateOf<ChannelEntity?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.refreshChannels()
@@ -143,7 +146,8 @@ fun ChannelsScreen(
                                 } else {
                                     onChannelClick(channel.channelId, channel.name)
                                 }
-                            }
+                            },
+                            onLeave = { channelToLeave = channel }
                         )
                     }
                 }
@@ -182,12 +186,30 @@ fun ChannelsScreen(
             }
         )
     }
+
+    // Leaving revokes the sender key, which is irreversible without another
+    // member's key, so it is confirmed rather than immediate.
+    channelToLeave?.let { channel ->
+        ConfirmationDialog(
+            title = stringResource(R.string.leave_channel_title, channel.name),
+            message = stringResource(R.string.leave_channel_confirmation),
+            confirmText = stringResource(R.string.leave_channel),
+            cancelText = stringResource(R.string.cancel),
+            onConfirm = {
+                viewModel.leaveChannel(channel.channelId)
+                channelToLeave = null
+            },
+            onDismiss = { channelToLeave = null },
+            isDestructive = true
+        )
+    }
 }
 
 @Composable
 fun ChannelListItem(
     channel: ChannelEntity,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLeave: (() -> Unit)? = null
 ) {
     Card(
         modifier = Modifier
@@ -262,6 +284,22 @@ fun ChannelListItem(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Only for channels we are actually a member of. A channel we have
+            // merely discovered has no key to revoke, so offering "leave" there
+            // would be a no-op that reads as a broken button. The child
+            // IconButton consumes its own clicks, so tapping it does not also
+            // trigger the card's onClick and open the channel.
+            if (onLeave != null && channel.isJoined && channel.senderKey != null) {
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(onClick = onLeave) {
+                    Icon(
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = stringResource(R.string.leave_channel),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
         }
     }
 }

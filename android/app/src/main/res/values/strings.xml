@@ -45,6 +45,9 @@
     <string name="public_channel">Public Channel</string>
     <string name="members_count">%d members</string>
     <string name="private_caps">PRIVATE</string>
+    <string name="leave_channel">Leave Channel</string>
+    <string name="leave_channel_title">Leave %1$s?</string>
+    <string name="leave_channel_confirmation">You will stop receiving messages from this channel and your shared key will be revoked, so you cannot read anything sent after you leave. Messages you have already received stay on this device. To rejoin you will need the key from another member.</string>
     <string name="channel_created_title">Channel Created</string>
     <string name="channel_created_share_key_hint">Share this channel ID and key with other members so they can join. There is no automatic way to distribute it -- copy it and send it however you\'d normally share something sensitive with them.</string>
     <string name="channel_id_label">Channel ID: %d</string>
