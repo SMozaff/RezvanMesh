@@ -55,6 +55,7 @@ pub fn should_advertise(state: PowerState) -> bool {
 }
 
 /// Whether Wi‑Fi Direct should be enabled in the given power state.
+#[cfg(test)]
 pub fn should_enable_wifi(state: PowerState) -> bool {
     match state {
         PowerState::Emergency | PowerState::Active | PowerState::Balanced => true,
@@ -63,6 +64,7 @@ pub fn should_enable_wifi(state: PowerState) -> bool {
 }
 
 /// BLE scan interval and window (milliseconds) for the given power state.
+#[cfg(test)]
 pub fn get_scan_params(state: PowerState) -> (u32, u32) {
     match state {
         PowerState::Emergency => (1000, 500),
@@ -89,6 +91,7 @@ pub fn get_ogm_interval_secs(state: PowerState) -> u64 {
 }
 
 /// Whether the engine should process incoming data packets in the current state.
+#[cfg(test)]
 pub fn should_process_data(state: PowerState) -> bool {
     state != PowerState::Dead
 }
