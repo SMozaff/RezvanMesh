@@ -484,7 +484,6 @@ impl SessionManager {
             .unwrap_or(false)
     }
 
-    /// Our own mesh X25519 private key, for deriving a beacon MAC key.
     // --- message encryption -------------------------------------------------
 
     pub fn encrypt(&mut self, peer: &NodeId, plaintext: &[u8]) -> Result<Vec<u8>, SessionError> {
