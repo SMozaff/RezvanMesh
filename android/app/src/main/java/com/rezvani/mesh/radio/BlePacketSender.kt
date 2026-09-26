@@ -2,6 +2,8 @@ package com.rezvani.mesh.radio
 
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothStatusCodes
+import android.os.Build
 import android.util.Log
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
@@ -209,10 +211,21 @@ class BlePacketSender(
             val started = synchronized(lock) {
                 val characteristic = writeCharacteristic ?: return false
                 lastWriteSucceeded = null
-                characteristic.value = packet
-                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 try {
-                    gatt.writeCharacteristic(characteristic)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        gatt.writeCharacteristic(
+                            characteristic,
+                            packet,
+                            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        ) == BluetoothStatusCodes.SUCCESS
+                    } else {
+                        @Suppress("DEPRECATION")
+                        run {
+                            characteristic.value = packet
+                            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            gatt.writeCharacteristic(characteristic)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "writeCharacteristic threw on attempt $attempt: ${e.message}")
                     false
