@@ -105,8 +105,10 @@ class ChannelKeyReconcileTest {
 
     @Test
     fun `revokes only the extras and not the shared ones`() {
+        // 2 is engine-only and must go. 9 is database-only: it gets installed,
+        // never revoked, so it must not appear here.
         assertEquals(
-            listOf(2, 9),
+            listOf(2),
             RezvanRadioService.channelsToRevoke(setOf(1, 2, 3), setOf(1, 3, 9))
         )
     }
