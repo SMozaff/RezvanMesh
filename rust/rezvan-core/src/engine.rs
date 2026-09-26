@@ -944,9 +944,22 @@ impl MeshEngine {
     }
 
     /// The shared key for `channel_id`, if we hold one. `None` after a restart
-    /// that failed to restore state, or for a channel we never created/joined.
+    /// that failed to restore state, or for a channel we never created/joined
+    /// or have since left.
     pub fn channel_key(&self, channel_id: u32) -> Option<[u8; 32]> {
         self.sessions.channel_key(channel_id)
+    }
+
+    /// Revoke our membership of a channel by dropping its key. See
+    /// `SessionManager::remove_channel_key` for why leaving has to reach the
+    /// engine rather than only the database.
+    pub fn remove_channel_key(&mut self, channel_id: u32) -> bool {
+        self.sessions.remove_channel_key(channel_id)
+    }
+
+    /// Every channel id the engine currently holds a key for.
+    pub fn channel_key_ids(&self) -> Vec<u32> {
+        self.sessions.channel_key_ids()
     }
 
     /// Current routing logical clock. Exposed for persistence tests and

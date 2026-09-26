@@ -28,6 +28,49 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RezvanRadioService : Service() {
 
     companion object {
+        /**
+         * Decode the packed big-endian `u32` list returned by
+         * `MeshCore.nativeGetChannelKeyIds`.
+         *
+         * Throws on a payload whose length is not a whole number of ids: that
+         * would mean the JNI boundary and this decoder disagree about the
+         * format, which is a bug worth surfacing rather than silently
+         * truncating (a truncated list would make us miss a channel that needs
+         * revoking).
+         */
+        @Throws(IllegalArgumentException::class)
+        fun decodeChannelKeyIds(packed: ByteArray?): Set<Int> {
+            if (packed == null) return emptySet()
+            require(packed.size % BYTES_PER_CHANNEL_ID == 0) {
+                "packed channel key id list must be a multiple of " +
+                    "$BYTES_PER_CHANNEL_ID bytes, got ${packed.size}"
+            }
+            val ids = LinkedHashSet<Int>(packed.size / BYTES_PER_CHANNEL_ID)
+            var offset = 0
+            while (offset < packed.size) {
+                var value = 0
+                for (i in 0 until BYTES_PER_CHANNEL_ID) {
+                    value = (value shl 8) or (packed[offset + i].toInt() and 0xFF)
+                }
+                ids.add(value)
+                offset += BYTES_PER_CHANNEL_ID
+            }
+            return ids
+        }
+
+        /**
+         * Channels the engine still holds a key for that the database says we
+         * are no longer in.
+         *
+         * This is the revoke half of reconciliation, extracted as a pure
+         * function because it is the easy half to get wrong and the half with
+         * no other test coverage.
+         */
+        fun channelsToRevoke(engineIds: Set<Int>, authoritativeIds: Set<Int>): List<Int> =
+            engineIds.filter { it !in authoritativeIds }.sorted()
+
+        private const val BYTES_PER_CHANNEL_ID = 4
+
         const val CHANNEL_ID = "rezvan_mesh"
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.rezvani.mesh.STOP_SERVICE"
@@ -190,19 +233,29 @@ class RezvanRadioService : Service() {
     }
 
     /**
-     * Re-install every persisted channel sender key into the engine.
+     * Make the engine's channel membership match the database exactly.
      *
-     * The database is authoritative for channel membership. The engine keeps its
-     * own copy in memory for the process lifetime and also persists it in the
-     * encrypted engine-state file, so a key is usually already present by the
-     * time we get here. Re-installing anyway means the two cannot drift: the
-     * newest database value wins, so a channel the user just left (key
-     * revoked) or joined is reflected even if the engine-state file is older
-     * than the database write.
+     * The database is authoritative, and the engine holds a *second* copy -- in
+     * memory for the process lifetime, and in the encrypted engine-state file
+     * which is rewritten on every periodic save. So reconciliation has to run in
+     * **both** directions, and the revoke direction is the one that is easy to
+     * forget:
      *
-     * Runs on a coroutine, so the DAO can be awaited directly. Failures are
-     * logged and swallowed -- a database problem must not stop the radio from
-     * starting, since BLE and direct messages do not depend on any of this.
+     *  * install — a channel the database has a key for must be in the engine,
+     *    even if the engine-state file predates the database write.
+     *  * revoke — a channel the engine holds but the database does **not** is
+     *    one the user has left (leaving clears the row *and* the key), and must
+     *    be dropped from the engine.
+     *
+     * Installing alone leaves the bug this fixes: the engine would keep
+     * decrypting a channel the user had left, and the next state save would
+     * write that key straight back into the state file, so the revocation would
+     * never take effect -- not even after a restart.
+     *
+     * Failures are logged and swallowed: a database problem must not stop the
+     * radio from starting, since BLE and direct messages do not depend on any
+     * of this. If the read fails we do **not** guess, and skip reconciliation
+     * entirely rather than risk revoking channels the user is still in.
      */
     private suspend fun restoreChannelKeys() {
         val ptr = enginePtr
@@ -212,10 +265,15 @@ class RezvanRadioService : Service() {
             val passphrase = com.rezvani.mesh.data.DbKeyProvider.getOrCreateKey(ctx)
             val repo = com.rezvani.mesh.data.repositories.ChannelRepository(ctx, passphrase)
             val keyed = repo.getChannelsWithKeys()
-            if (keyed.isEmpty()) {
-                DiagLogger.ble("No persisted channel keys to restore")
+            val authoritativeIds = keyed.map { it.first }.toSet()
+
+            val engineIds = runCatching {
+                decodeChannelKeyIds(com.rezvani.mesh.MeshCore.nativeGetChannelKeyIds(ptr))
+            }.getOrElse { error ->
+                DiagLogger.err("SERVICE", "Could not read engine channel key ids: ${error.message}")
                 return
             }
+
             var installed = 0
             for ((channelId, key) in keyed) {
                 if (com.rezvani.mesh.MeshCore.nativeSetChannelKey(ptr, channelId, key)) {
@@ -224,10 +282,39 @@ class RezvanRadioService : Service() {
                     DiagLogger.err("SERVICE", "Could not install sender key for channel $channelId")
                 }
             }
-            DiagLogger.ble("Restored $installed/${keyed.size} channel sender key(s)")
+
+            val stale = channelsToRevoke(engineIds, authoritativeIds)
+            var revoked = 0
+            for (channelId in stale) {
+                if (com.rezvani.mesh.MeshCore.nativeRemoveChannelKey(ptr, channelId)) {
+                    revoked++
+                    DiagLogger.ble("Revoked stale sender key for channel $channelId")
+                }
+            }
+
+            DiagLogger.ble(
+                "Channel keys reconciled: installed=$installed/${keyed.size} revoked=$revoked/${stale.size}"
+            )
+
+            // If anything was revoked, the state file still holds those keys.
+            // Persist immediately rather than waiting for the next periodic
+            // save, so a crash in between cannot resurrect them.
+            if (revoked > 0) saveEngineState()
         } catch (e: Exception) {
-            DiagLogger.err("SERVICE", "Channel key restore failed: ${e.message}", e)
+            DiagLogger.err("SERVICE", "Channel key reconciliation failed: ${e.message}", e)
         }
+    }
+
+    /**
+     * Revoke our membership of a channel in the engine.
+     *
+     * The database half of leaving happens in `ChannelRepository`; this is the
+     * other half, and it is the one that actually stops message decryption.
+     */
+    fun removeChannelKey(channelId: Int): Boolean {
+        val ptr = enginePtr
+        if (ptr == 0L) return false
+        return com.rezvani.mesh.MeshCore.nativeRemoveChannelKey(ptr, channelId)
     }
 
     /** Pushes the latest battery reading into the engine; also re-applies the

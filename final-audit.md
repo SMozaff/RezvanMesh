@@ -17,7 +17,7 @@ library) is now migrated to pure Rust.** See *Remediation Status*.
 | **C04** | Fixed | `RadioControllerImpl.kt` — `NODE_ID_OFFSET = 2` |
 | **C05** | Fixed | `BlePacketSender.kt` — rewritten; bounded queue, explicit success/failure |
 | **C06** | Fixed | `WifiPacketSender.kt`, `RadioControllerImpl.kt` |
-| **H01** | Fixed | `ChannelEntity.kt` (+`senderKey` column), `ChannelDao.kt`, `ChannelRepository.kt`, `ChannelsViewModel.kt`, `RezvanRadioService.kt` |
+| **H01** | Fixed | `ChannelEntity.kt` (+`senderKey` column), `ChannelDao.kt`, `ChannelRepository.kt`, `ChannelsViewModel.kt`, `RezvanRadioService.kt` (incl. the **N10** revoke path) |
 | **H02** | Fixed | `ChannelRepository.kt`, `ChannelQrCodec.kt` |
 | **H03** | Fixed | `ChannelPasswordHasher.kt` (new), `JoinThrottle.kt` (new), `ChannelRepository.kt`, `ChannelDao.kt`, `ChannelsViewModel.kt`, `CreateChannelScreen.kt`, `ChannelsScreen.kt` |
 | **H04** | Fixed | `routing.rs` — unverified beacons touch no state |
@@ -126,6 +126,21 @@ The tests:
   forming.
 - `IdentityKeypair` now zeroizes key material on drop, with tests for the wipe
   and for clone independence.
+- **N10 — leaving a channel now actually revokes the key.** The engine held a
+  second copy of every channel key, in memory and in the encrypted engine-state
+  file that is rewritten on every periodic save, so clearing the database row
+  alone never revoked anything and the next start-up restored the key. Removal
+  now exists end to end (`SessionManager`/`MeshEngine` `remove_channel_key` and
+  `channel_key_ids`, exposed as `nativeRemoveChannelKey` /
+  `nativeGetChannelKeyIds`), and start-up reconciliation is bidirectional: it
+  installs the database's keys *and* revokes any the engine still holds that the
+  database does not, then persists immediately so a crash cannot resurrect them.
+  A failed read skips reconciliation entirely rather than guessing, so a database
+  problem can never revoke channels by accident. The revoke diff is a pure
+  function (`channelsToRevoke`, 12 unit tests); 4 Rust tests cover removal,
+  survival of revocation across export/import, and that a removed channel can no
+  longer send. `leaveChannel` itself had **no callers**, so the revoke path was
+  unreachable from the UI.
 
 **The circularity in round-trip tests is now broken.** Every derivation the
 migration touched is also pinned as a known-answer test against an
@@ -191,6 +206,7 @@ the same pass.
 | **N7** | Medium | `AppDatabase.openOrRecreate` caught bare `Exception` and deleted the database unconditionally, so any unrelated bug on the open path destroyed all message history. | `AppDatabase.kt` |
 | **N8** | Medium | Crash dossiers (device fingerprint, git SHA, stack trace, 200 diag lines with peer NodeIds and MAC fragments) were written to `MediaStore.Downloads` — user-visible, media-scanner-indexed, world-readable on older releases. | `RezvanApplication.kt` |
 | **N9** | Medium | `ContactsRepository` was instantiated once per consumer, each with an un-cancellable `SupervisorJob`, and each racing to import the same legacy file. | `ContactsRepository.kt` |
+| **N10** | **High** | **Leaving a channel never actually revoked anything.** The H01 fix made the database authoritative for membership and documented that leaving "revokes the key", but it only cleared the database row. There was **no native channel-key removal path at all**, so the engine kept the key in memory for the life of the process, the periodic engine-state save wrote it straight back into the encrypted state file, and the next start-up restored it. The UI said "left" while the device could still decrypt the channel indefinitely. Reconcile-on-start-up also only ever *installed* keys, never revoked, so the two could not converge. | `session.rs`, `engine.rs`, `lib.rs`, `RezvanRadioService.kt`, `MeshCore.kt`, `ChannelsViewModel.kt` |
 
 ### Verification
 

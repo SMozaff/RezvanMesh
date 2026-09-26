@@ -538,6 +538,48 @@ pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeSetChannelKey(
     1
 }
 
+/// Revoke membership of a channel by dropping its sender key.
+///
+/// Returns true if a key was held and removed. The Android side calls this
+/// when the user leaves a channel: clearing the database row alone would leave
+/// the engine able to decrypt that channel for the rest of the process's life,
+/// and the next engine-state save would write the key straight back out.
+#[no_mangle]
+pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeRemoveChannelKey(
+    _env: JNIEnv,
+    _class: JClass,
+    core_ptr: jlong,
+    channel_id: jint,
+) -> jboolean {
+    with_engine(core_ptr, |engine| engine.remove_channel_key(channel_id as u32)).unwrap_or(false)
+        as jboolean
+}
+
+/// Channel ids the engine currently holds a sender key for, as a packed
+/// big-endian `u32` list.
+///
+/// The service uses this to reconcile against the authoritative database on
+/// start-up: anything still held here but absent from the database is a channel
+/// the user has left, and must be revoked rather than silently retained.
+///
+/// Sorted ascending, so the payload is deterministic.
+#[no_mangle]
+pub extern "C" fn Java_com_rezvani_mesh_MeshCore_nativeGetChannelKeyIds(
+    mut env: JNIEnv,
+    _class: JClass,
+    core_ptr: jlong,
+) -> jbyteArray {
+    let ids = match with_engine(core_ptr, |engine| engine.channel_key_ids()) {
+        Some(ids) => ids,
+        None => return std::ptr::null_mut(),
+    };
+    let mut packed = Vec::with_capacity(ids.len() * 4);
+    for id in ids {
+        packed.extend_from_slice(&id.to_be_bytes());
+    }
+    vec_to_jbytearray(&mut env, &packed).unwrap_or(std::ptr::null_mut())
+}
+
 /// Encrypts+signs `message` for the given channel and returns a serialized
 /// action envelope (same format as nativeTick/nativeSendMessage) for
 /// ActionDispatcher to route -- broadcasts to all connected peers, since

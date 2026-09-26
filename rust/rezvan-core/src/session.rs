@@ -239,6 +239,37 @@ impl SessionManager {
         self.channel_keys.get(&channel_id).copied()
     }
 
+    /// Drop the shared key for a channel, e.g. when the user leaves it.
+    ///
+    /// Returns `true` if a key was actually held and removed, `false` if there
+    /// was nothing to remove.
+    ///
+    /// This is not just hygiene. The key is the only thing that lets us decrypt
+    /// channel traffic, and it is copied into the encrypted engine-state file
+    /// every time that is saved. So a "leave" that only cleared the database
+    /// row would leave the engine able to read the channel for the rest of the
+    /// process's life, and the next state save would write the key straight back
+    /// into the state file -- meaning the revocation would never take effect at
+    /// all, not even across a restart. Removing it here is what makes leaving
+    /// mean leaving.
+    pub fn remove_channel_key(&mut self, channel_id: u32) -> bool {
+        self.channel_keys.remove(&channel_id).is_some()
+    }
+
+    /// Every channel id we currently hold a key for.
+    ///
+    /// Used to reconcile the engine's membership against the authoritative
+    /// database on start-up: anything the engine holds that the database does
+    /// not is a channel we are supposed to have left, and has to be revoked
+    /// rather than silently kept.
+    pub fn channel_key_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.channel_keys.keys().copied().collect();
+        // Sorted so the result is deterministic, which keeps the JNI payload
+        // and any test expectations stable across runs.
+        ids.sort_unstable();
+        ids
+    }
+
     pub fn identity(&self) -> IdentityKeypair {
         self.identity.clone()
     }
@@ -513,6 +544,110 @@ impl SessionManager {
 
     pub fn remove_session(&mut self, peer: &NodeId) {
         self.sessions.remove(peer);
+    }
+
+    // --- channel membership tests -------------------------------------------
+
+    #[test]
+    fn removing_a_channel_key_reports_whether_one_was_held() {
+        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[1u8; 32]));
+        let key = mgr.create_channel_key(7);
+        assert_eq!(mgr.channel_key(7), Some(key));
+        assert!(mgr.channel_key_ids().contains(&7));
+
+        assert!(mgr.remove_channel_key(7), "a held key should be reported as removed");
+        assert_eq!(mgr.channel_key(7), None, "the key must actually be gone");
+        assert!(!mgr.channel_key_ids().contains(&7));
+
+        // Second removal has nothing to do, and must say so rather than
+        // pretending it revoked something.
+        assert!(!mgr.remove_channel_key(7), "removing an absent key is a no-op");
+        assert!(!mgr.remove_channel_key(1234), "unknown channel is a no-op");
+    }
+
+    #[test]
+    fn removing_one_channel_leaves_the_others_alone() {
+        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[2u8; 32]));
+        let keep1 = mgr.create_channel_key(1);
+        let drop_me = mgr.create_channel_key(2);
+        let keep2 = mgr.create_channel_key(3);
+
+        assert!(mgr.remove_channel_key(2));
+        assert_eq!(mgr.channel_key(1), Some(keep1));
+        assert_eq!(mgr.channel_key(2), None);
+        assert_eq!(mgr.channel_key(3), Some(keep2));
+        assert_eq!(mgr.channel_key_ids(), vec![1, 3]);
+    }
+
+    #[test]
+    fn channel_key_ids_are_sorted_and_deduplicated() {
+        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[3u8; 32]));
+        for id in [300u32, 7, 65535, 42, 1] {
+            mgr.set_channel_key(id, [id as u8; 32]);
+        }
+        // Setting the same id again must not produce a duplicate entry.
+        mgr.set_channel_key(42, [0xAA; 32]);
+
+        let ids = mgr.channel_key_ids();
+        assert_eq!(ids, vec![1, 42, 300, 65535]);
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(ids, sorted, "ids must be sorted for a deterministic JNI payload");
+    }
+
+    /// The bug this guards: a removed key must not reappear in the persisted
+    /// state, or the next start-up would restore the membership the user just
+    /// gave up and the revocation would never take effect.
+    #[test]
+    fn a_removed_channel_key_does_not_come_back_through_persistence() {
+        let mut mgr = SessionManager::new(Box::new(SodiumCryptoProvider), generate_identity(&[4u8; 32]));
+        mgr.create_channel_key(1);
+        mgr.create_channel_key(2);
+        assert!(mgr.remove_channel_key(2));
+
+        let state = mgr.export_state().expect("export");
+        assert_eq!(
+            state.channel_keys.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![1],
+            "the revoked key must not be in the exported state"
+        );
+
+        // A fresh manager, as after a process restart, must not inherit it.
+        let mut restored = SessionManager::new(
+            Box::new(SodiumCryptoProvider),
+            generate_identity(&[4u8; 32]),
+        );
+        restored.import_state(state).expect("import");
+        assert_eq!(restored.channel_key(2), None, "revocation must survive a restart");
+        assert_eq!(restored.channel_key_ids(), vec![1]);
+    }
+
+    /// A removed channel must also stop being *usable*: `send_channel_message`
+    /// returns no actions once there is no key, which is what actually prevents
+    /// the user from posting to a channel they left.
+    #[test]
+    fn a_removed_channel_cannot_send() {
+        use crate::action::Action;
+        use crate::engine::MeshEngine;
+
+        let mut engine = MeshEngine::new(&[5u8; 32], Box::new(SodiumCryptoProvider));
+        engine.create_channel_key(9);
+        assert_eq!(engine.channel_key_ids(), vec![9]);
+        assert!(
+            matches!(
+                engine.send_channel_message(9, b"before").as_slice(),
+                [Action::SendBlePacket { .. }]
+            ),
+            "a channel we hold a key for must be sendable"
+        );
+
+        assert!(engine.remove_channel_key(9));
+        assert!(
+            engine.send_channel_message(9, b"after").is_empty(),
+            "a channel we have left must produce no actions"
+        );
+        assert!(engine.channel_key(9).is_none());
+        assert!(engine.channel_key_ids().is_empty());
     }
 
     // --- on-disk persistence -------------------------------------------------

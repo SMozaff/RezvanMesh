@@ -184,6 +184,40 @@ class ChannelsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /**
+     * Leave a channel and actually stop being able to read it.
+     *
+     * Order matters here. The database row is cleared first, then the engine's
+     * copy is dropped. Doing only the first is what the codebase used to do, and
+     * it did not revoke anything: the key stayed in the engine for the life of
+     * the process *and* was written back into the encrypted engine-state file
+     * on the next periodic save, so the user could read the channel forever
+     * despite the UI saying they had left.
+     *
+     * Both halves are best-effort. If the engine is not running the database
+     * still records the departure, and the next start-up reconciliation
+     * reconciles the engine from it.
+     */
+    fun leaveChannel(channelId: Int, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            channelRepo.leaveChannel(channelId)
+            val service = com.rezvani.mesh.MeshServiceConnection.activeService
+            if (service == null) {
+                DiagLogger.ble(
+                    "Left channel $channelId in the database only; the mesh service is " +
+                        "offline and will reconcile on next start"
+                )
+            } else if (!service.removeChannelKey(channelId)) {
+                DiagLogger.ble(
+                    "Left channel $channelId; the engine held no key for it"
+                )
+            } else {
+                DiagLogger.ble("Left channel $channelId and revoked its sender key")
+            }
+            onDone()
+        }
+    }
+
     private companion object {
         const val SENDER_KEY_BYTES = 32
     }

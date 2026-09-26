@@ -66,6 +66,33 @@ object MeshCore {
     @JvmStatic external fun nativeCreateChannelKey(corePtr: Long, channelId: Int): ByteArray?
     @JvmStatic external fun nativeSetChannelKey(corePtr: Long, channelId: Int, key: ByteArray): Boolean
     @JvmStatic external fun nativeSendChannelMessage(corePtr: Long, channelId: Int, message: ByteArray): ByteArray?
+
+    /**
+     * Revoke membership of a channel by dropping its sender key.
+     *
+     * Necessary because the database is not the only copy: the key is also held
+     * in the engine and written into the encrypted engine-state file on every
+     * save, so clearing the database row alone would leave the engine able to
+     * decrypt that channel for the rest of the process's life and the next save
+     * would write the key straight back out. See
+     * `RezvanRadioService.removeChannelKey`.
+     *
+     * @return true if a key was held and has now been removed.
+     */
+    @JvmStatic external fun nativeRemoveChannelKey(corePtr: Long, channelId: Int): Boolean
+
+    /**
+     * Channel ids the engine currently holds a sender key for, as a packed
+     * big-endian `u32` list (4 bytes per id, sorted ascending).
+     *
+     * The service reconciles this against the authoritative database on
+     * start-up: an id present here but absent from the database is a channel the
+     * user has left, and has to be revoked rather than silently retained.
+     *
+     * @return packed ids, or null if the engine handle is dead.
+     */
+    @JvmStatic external fun nativeGetChannelKeyIds(corePtr: Long): ByteArray?
+
     @JvmStatic external fun nativeGetPowerState(corePtr: Long): Int
     @JvmStatic external fun nativeSetPowerOverride(corePtr: Long, state: Int)
     @JvmStatic external fun nativeClearPowerOverride(corePtr: Long)
