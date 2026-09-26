@@ -137,7 +137,8 @@ The tests:
   database does not, then persists immediately so a crash cannot resurrect them.
   A failed read skips reconciliation entirely rather than guessing, so a database
   problem can never revoke channels by accident. The revoke diff is a pure
-  function (`channelsToRevoke`, 12 unit tests); 4 Rust tests cover removal,
+  function (`channelsToRevoke`, 16 Kotlin unit tests); 5 Rust tests cover
+  removal, non-interference between channels, sorted/deduplicated enumeration,
   survival of revocation across export/import, and that a removed channel can no
   longer send. `leaveChannel` itself had **no callers**, so the revoke path was
   unreachable from the UI.
