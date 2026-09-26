@@ -24,11 +24,32 @@ pub fn sign(identity: &IdentityKeypair, message: &[u8]) -> [u8; 64] {
 
 /// Verify a detached Ed25519 signature.
 ///
-/// Uses `verify_strict`, which additionally rejects small-order public keys and
-/// otherwise non-canonical signatures. The previous `sodiumoxide` call mapped
-/// to a verify that was already strict in this sense, so this is not a
-/// behaviour change -- but it is worth being explicit, since "verify" quietly
-/// becoming laxer in a mesh router would be a real downgrade.
+/// Uses `verify_strict`, which performs **two** checks: scalar malleability (the
+/// `S` component is fully reduced) and point malleability (no small torsion
+/// component in `R`).
+///
+/// This is deliberately *stricter* than the previous implementation, and the
+/// difference is worth being precise about rather than calling it a no-op.
+/// The old path was a thin wrapper over libsodium's
+/// `crypto_sign_ed25519_verify_detached`, which rejects a non-canonical `S` but
+/// performs no explicit torsion check on `R`. `verify_strict` rejects a small
+/// set of signatures that libsodium accepted.
+///
+/// That set is not reachable by an honest signer:
+///  * Ed25519 signing is deterministic (RFC 8032), so the same key and message
+///    always yield the same bytes -- a legitimate peer never produces a
+///    malleable variant, and this is pinned by the RFC 8032 vectors below.
+///  * So the only signatures newly rejected are adversarially constructed, and
+///    rejecting them is the point.
+///
+/// Two consequences worth stating explicitly:
+///  * Interoperability is unaffected. Peers on the previous build emit
+///    non-malleable signatures, which `verify_strict` accepts.
+///  * `verify_strict` is documented as *non-RFC-8032-compliant* in the sense
+///    that it rejects some signatures the RFC permits. That is a deliberate
+///    trade here: a mesh router re-verifies the same packet at every hop and
+///    relays it onward, so accepting a malleable encoding would let one valid
+///    packet be presented to different hops under different byte encodings.
 pub fn verify(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
     let Ok(verifying_key) = VerifyingKey::from_bytes(public_key) else {
         // Not a well-formed curve point. A rejected key can never verify, so

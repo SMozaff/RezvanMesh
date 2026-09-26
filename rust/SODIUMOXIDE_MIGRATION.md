@@ -122,12 +122,23 @@ Android NDK cross-compile no longer runs autotools.
 The wire format and the on-disk state format are unchanged. Every primitive is
 deterministic and specified:
 
-- **Ed25519** (RFC 8032) — deterministic keygen and signing. Signatures are
-  byte-identical, so packets signed by an old build verify on a new one.
+- **Ed25519** (RFC 8032) — deterministic keygen and signing. Signature bytes
+  are identical, so packets signed by an old build verify on a new one.
+  Verification is *stricter* than before: `verify_strict` additionally rejects
+  small torsion components in `R`, which libsodium's `verify_detached` did not
+  check. Since honest signing is deterministic, no legitimate signature is
+  affected -- only adversarially constructed ones. See `sign::verify`.
 - **X25519** (RFC 7748) — both implementations clamp the scalar identically.
-- **HMAC-SHA256 / HKDF** (RFC 2104 / 5869) — the salt-length boundary moved from
-  a hand-rolled helper to the `hmac` crate's RFC 2104 implementation, which
-  produces identical output in all three cases (empty, ≤32 bytes, >32 bytes).
+- **HMAC-SHA256 / HKDF** (RFC 2104 / 5869) — identical for every salt this
+  application uses, with one documented exception. All four call sites
+  (`secure_store`, `epoch_key`, `identity`, `beacon_mac`) pass an **empty**
+  salt, for which every path agrees exactly. For a *hypothetical* salt of
+  33–64 bytes the output does change: the boundary for hashing a key down is
+  the HMAC **block size (64)**, not the hash output size (32). The old code
+  hashed anything over 32 bytes, because sodiumoxide's `hmacsha256::Key` is a
+  fixed 32-byte type and could not hold more. The current behaviour is what
+  RFC 2104 specifies; the old boundary was an artefact of the wrapper. Pinned by
+  `salt_hash_down_boundary_is_the_hmac_block_size`.
 - **XChaCha20-Poly1305** — same 24-byte random nonce, same layout.
 
 ### How that is verified
@@ -148,6 +159,24 @@ tests rather than asserted in a comment:
   silently stop forming.
 - `IdentityKeypair` now zeroizes its key material on drop, and there is a test
   for that plus one confirming a clone is an independent copy.
+
+### A note on trusting documentation for pinned versions
+
+Two of the API details here were checked against **both** the vendored crate
+source and external documentation, and they disagreed in ways that mattered:
+
+- A docs lookup for `chacha20poly1305` returned the **latest** (0.11) API --
+  `AeadCore`/`Generate` traits, `Array<u8, U24>`, `.as_ref()` payloads. The
+  pinned version is 0.10.1 with `aead` 0.5.2, which instead uses
+  `KeyInit` + `Payload { msg, aad }`. Written from the latest docs, this code
+  would not have compiled.
+- The `ed25519-dalek` 2.2.0 docs revealed that `verify_strict` is documented as
+  *non-RFC-8032-compliant* and performs an extra malleability check. Reading
+  only the source had confirmed the method existed, not what it did.
+
+So: for a pinned-version migration, the lock file and vendored source are the
+authority, and external docs are a useful second opinion that has to be
+reconciled against them rather than followed.
 
 ### Residual risk
 

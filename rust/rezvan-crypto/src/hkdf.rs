@@ -118,28 +118,49 @@ mod tests {
         );
     }
 
-    /// A 32-byte salt must not be hashed down, and a 33-byte salt must be --
-    /// i.e. the boundary is exactly where RFC 2104 puts it, not somewhere
-    /// convenient.
+    /// Pins the salt-length semantics of the current implementation.
+    ///
+    /// RFC 2104's rule, which `hmac` implements in `get_der_key`, is: a key
+    /// **larger than the hash block size** (64 for SHA-256) is hashed down; a
+    /// key of block size or smaller is zero-padded as-is. So the hash-down
+    /// boundary is **64 bytes**, not 32.
+    ///
+    /// This differs from the previous implementation, which hashed anything
+    /// longer than 32 bytes -- not because RFC 2104 says so, but because
+    /// sodiumoxide's `hmacsha256::Key` is a fixed 32-byte type and could not
+    /// hold a longer key. The old boundary was an artefact of that wrapper; the
+    /// current one is the standard.
+    ///
+    /// The difference is unobservable in this application: every caller passes
+    /// an empty salt (see `secure_store`, `epoch_key`, `identity`,
+    /// `beacon_mac`), for which all three code paths -- empty, short, and
+    /// hashed -- agree exactly. It is pinned here so the boundary is not
+    /// silently moved again.
     #[test]
-    fn salt_length_boundary_matches_rfc2104() {
+    fn salt_hash_down_boundary_is_the_hmac_block_size() {
         let ikm = b"ikm";
         let info = b"info";
-        let short = hkdf_sha256(ikm, &[0xAA; 32], info, 32);
-        // If a 32-byte salt were (incorrectly) hashed down, hashing it by hand
-        // would reproduce the same output.
-        let hand_hashed = hkdf_sha256(ikm, &sha256_of(&[0xAA; 32]), info, 32);
-        assert_ne!(
-            short, hand_hashed,
-            "a 32-byte salt must be used as-is, not pre-hashed"
-        );
+        let hashed = |salt: &[u8]| hkdf_sha256(ikm, &sha256_of(salt), info, 32);
 
-        let long = hkdf_sha256(ikm, &[0xAA; 33], info, 32);
-        let hand_hashed_long = hkdf_sha256(ikm, &sha256_of(&[0xAA; 33]), info, 32);
-        assert_eq!(
-            long, hand_hashed_long,
-            "a 33-byte salt must be hashed down per RFC 2104"
-        );
+        // At or below the block size: used as-is, so pre-hashing must differ.
+        for len in [1usize, 32, 33, 64] {
+            let salt = vec![0xAA; len];
+            assert_ne!(
+                hkdf_sha256(ikm, &salt, info, 32),
+                hashed(&salt),
+                "a {len}-byte salt is within the block size and must not be pre-hashed"
+            );
+        }
+
+        // Above the block size: hashed down, so pre-hashing must match exactly.
+        for len in [65usize, 128] {
+            let salt = vec![0xAA; len];
+            assert_eq!(
+                hkdf_sha256(ikm, &salt, info, 32),
+                hashed(&salt),
+                "a {len}-byte salt exceeds the block size and must be hashed down"
+            );
+        }
     }
 
     fn sha256_of(input: &[u8]) -> Vec<u8> {

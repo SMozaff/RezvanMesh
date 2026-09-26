@@ -93,8 +93,27 @@ expected. `rezvan-crypto` now uses `ed25519-dalek`, `x25519-dalek`,
 `libsodium-sys` are gone, the graph is **8 packages smaller**, and the Android
 NDK cross-compile no longer runs autotools at all.
 
-**Byte-compatibility is pinned by tests, not asserted in a comment.** The whole
-safety argument is that output is unchanged, so:
+**Byte-compatibility is pinned by tests, not asserted in a comment** — and
+checking the migration against external documentation found **two places where
+"byte-identical" was too strong a claim**:
+
+1. **HKDF salt handling changed for 33–64 byte salts.** The boundary for
+   hashing a key down is the HMAC *block size* (64), not the hash output size
+   (32). The old code hashed anything over 32 bytes only because sodiumoxide's
+   `hmacsha256::Key` is a fixed 32-byte type. The new behaviour is what
+   RFC 2104 specifies; the old boundary was a wrapper artefact. Unobservable
+   here — all four call sites pass an **empty** salt, where all paths agree
+   exactly — but it is now pinned by
+   `salt_hash_down_boundary_is_the_hmac_block_size` rather than left
+   unstated.
+2. **Signature *verification* is stricter than before.** `verify_strict`
+   additionally rejects small torsion components in `R`, which libsodium's
+   `verify_detached` did not check. Signature *bytes* are unchanged (RFC 8032
+   vectors pin this), and honest signing is deterministic, so no legitimate
+   traffic is affected — but calling it "no behaviour change", as an earlier
+   draft of this report did, was wrong.
+
+The tests:
 - **RFC 8032 §7.1 vectors** now assert the exact Ed25519 signature bytes for two
   published (seed, key, message, signature) tuples. These come from the spec
   rather than from a captured run, so they test conformance, not
